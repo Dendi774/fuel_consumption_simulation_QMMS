@@ -10,3 +10,44 @@ __pycache__/
 
 # VS Code settings
 .vscode/
+# Python
+
+**pycache**/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environment
+
+venv/
+.env/
+
+# Streamlit
+
+.streamlit/
+
+# VS Code
+
+.vscode/
+
+# Jupyter
+
+.ipynb_checkpoints/
+
+# OS Files
+
+.DS_Store
+Thumbs.db
+
+# Logs
+
+*.log
+
+# Build Files
+
+build/
+dist/
+
+# CSV Exports
+
+*.csv

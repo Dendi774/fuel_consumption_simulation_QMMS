@@ -1,12 +1,11 @@
 ROUTES = {
     "route_1": {
         "name": "baclaran to tambo",
-        "distance_km": 3.2,
+        "distance_km": 1.84,
          
          "segments": [
             {'type': 'accelerate',  'distance': 200,  'label': 'Entering Roxas Blvd'},
-            {'type': 'cruise',      'distance': 800,  'label': 'Roxas Blvd straight'},
-            {'type': 'cruise',      'distance': 600,  'label': 'Roxas Blvd continued'},
+            {'type': 'cruise',      'distance': 1400,  'label': 'Roxas Blvd straight'},
             {'type': 'decelerate',  'distance': 80,   'target_speed': 8.3,
                                                        'label': 'Tambo turn approach'},
             {'type': 'turn',        'distance': 60,   'label': 'Into Tambo'},

@@ -8,6 +8,7 @@ from behaviors import BEHAVIOR_PROFILES
 RHO_AIR = 1.225   # kg/m³ — air density at sea level (ISO 2533)
 GRAVITY = 9.81    # m/s²  — gravitational acceleration
 DT      = 1.0     # s     — simulation timestep (1 second)
+ETA = JEEPNEY_PARAMS["eta_mt"] * 0.35
 
 
 def calculate_traction_force(v, a, mass, Cd, frontal_area, Crr):
@@ -262,7 +263,7 @@ def run_simulation(segments, behavior_name, behavior):
                 FC_rate = calculate_fuel_rate(
                     F_traction=F_traction,
                     v=speed,
-                    eta=JEEPNEY_PARAMS["eta_mt"],
+                    eta=ETA,
                     fuel_LHV=JEEPNEY_PARAMS["fuel_LHV"]
                 )
 
@@ -294,7 +295,7 @@ def run_simulation(segments, behavior_name, behavior):
 
             # EXIT CONDITION: vehicle has reached a full stop
             # Only relevant for the final decelerate segment (target_v = 0)
-            if target_v < 0.1 and speed < 0.05:
+            if target_v <= 0 and speed <= 0:
                 break
 
     # compute final summary metrics

@@ -4,7 +4,7 @@ BEHAVIOR_PROFILES = {
         'color': 'red',
         'accel_rate': 2.5,       # m/s² — how fast it speeds up
         'decel_rate': -3.0,      # m/s² — how fast it slows down
-        'cruise_speed': 70/3.6,  # m/s — convert km/h to m/s (60 km/h)
+        'cruise_speed': 70/3.6,  # m/s — convert km/h to m/s (70 km/h)
         'corner_speed': 25/3.6,  # m/s — speed through turns
         'coast': False,          # does not coast during deceleration
     },

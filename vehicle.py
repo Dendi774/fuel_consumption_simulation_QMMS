@@ -8,5 +8,5 @@ JEEPNEY_PARAMS = {
     'fuel_LHV': 9950, # not final           # Wh/L — diesel lower heating value
     'fuel_density': 0.832,      # kg/L — diesel density
     'eta_mt': 0.84,             # drivetrain efficiency, manual diesel
-    'co2_per_litre': 2640 # Not final,      # g CO2 per litre of diesel burned
+    # 'co2_per_litre': 2640 # Not final,      # g CO2 per litre of diesel burned
 }

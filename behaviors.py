@@ -4,11 +4,9 @@ BEHAVIOR_PROFILES = {
         'color': 'red',
         'accel_rate': 2.5,       # m/s² — how fast it speeds up
         'decel_rate': -3.0,      # m/s² — how fast it slows down
-        'cruise_speed': 70/3.6,  # m/s — convert km/h to m/s (60 km/h)
+        'cruise_speed': 70/3.6,  # m/s — convert km/h to m/s (70 km/h)
         'corner_speed': 25/3.6,  # m/s — speed through turns
-        'idle_duration': 10,     # seconds at each stop
         'coast': False,          # does not coast during deceleration
-        'eta_factor': 0.93,      # efficiency modifier for this style
     },
 
     'Moderate': {
@@ -18,9 +16,7 @@ BEHAVIOR_PROFILES = {
         'decel_rate': -1.5,
         'cruise_speed': 50/3.6,
         'corner_speed': 20/3.6,
-        'idle_duration': 15,
         'coast': True,
-        'eta_factor': 1.00,
     },
 
     'Eco': {
@@ -30,8 +26,6 @@ BEHAVIOR_PROFILES = {
         'decel_rate': -0.75,
         'cruise_speed': 40/3.6,
         'corner_speed': 15/3.6,
-        'idle_duration': 8,
         'coast': True,
-        'eta_factor': 1.07,
     },
 }

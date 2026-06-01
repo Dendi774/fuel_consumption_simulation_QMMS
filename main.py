@@ -87,7 +87,7 @@ if run_button:
 
         col1.metric(
             "Distance",
-            f"{total_distance/1000:.2f} km"
+            f"{total_distance:.2f} km"
         )
 
         col2.metric(

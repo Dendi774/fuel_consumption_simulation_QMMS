@@ -213,7 +213,7 @@ def run_simulation(segments, behavior_name, behavior):
 
                 log.append({
                     'time':          len(log),
-                    'speed_kmh':     0.0,
+                    'speed_kmh':     speed * 3.6,
                     'accel_ms2':     0.0,
                     'phase':         'idle',
                     'segment_label': label,
@@ -265,8 +265,14 @@ def run_simulation(segments, behavior_name, behavior):
             # from oscillating above and below the target each second.
             speed_error = target_v - speed
 
-            if seg_type == 'cruise':
-                desired_a = (speed_error / DT) * 0.4
+            if seg_type == 'decelerate':
+                
+                remaining = max(seg_dist - dist_covered, 0.1)
+                desired_a = (
+                    (target_v**2 - speed**2)
+                    / (2 * remaining)
+                )
+                
             else:
                 desired_a = speed_error / DT
 
@@ -372,9 +378,7 @@ def run_simulation(segments, behavior_name, behavior):
                 'behavior':      behavior_name,
             })
 
-            # Exit: vehicle has reached a full stop
-            if target_v <= 0 and speed <= 0:
-                break
+
 
     # POST-LOOP: COMPUTE FINAL METRICS
     # Use declared route distance (sum of all segment distances) as the

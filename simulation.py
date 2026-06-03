@@ -140,6 +140,21 @@ def calculate_fuel_rate(F_traction, v):
     return max(fuel_rate, 0.0)
 
 
+def calculate_natural_deceleration(speed):
+    """
+    Deceleration when driver lifts off throttle — no engine, no brakes.
+    Only rolling resistance and aerodynamic drag act on the vehicle.
+    These come directly from the resistive terms of Equation 1 (with a=0).
+
+    a_natural = -(F_rolling + F_aero) / mass
+    """
+    F_rolling = JEEPNEY_PARAMS["mass_empty"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
+    F_aero    = (0.5 * RHO_AIR
+                 * JEEPNEY_PARAMS["Cd"]
+                 * JEEPNEY_PARAMS["frontal_area"]
+                 * speed ** 2)
+    return -(F_rolling + F_aero) / JEEPNEY_PARAMS["mass_empty"]
+
 
 # MAIN SIMULATION FUNCTION
 def run_simulation(segments, behavior_name, behavior):
@@ -253,6 +268,7 @@ def run_simulation(segments, behavior_name, behavior):
 
         # INNER LOOP — step through this segment one second at a time
         dist_covered = 0.0
+        aggressive_braking = False
 
         while dist_covered < seg_dist:
             # STEP 1: Calculate desired acceleration 
@@ -266,12 +282,47 @@ def run_simulation(segments, behavior_name, behavior):
             speed_error = target_v - speed
 
             if seg_type == 'decelerate':
-                
-                remaining = max(seg_dist - dist_covered, 0.1)
-                desired_a = (
-                    (target_v**2 - speed**2)
-                    / (2 * remaining)
-                )
+
+                remaining  = max(seg_dist - dist_covered, 0.1)
+                a_required = (target_v**2 - speed**2) / (2 * remaining)
+
+                if behavior_name == 'Eco':
+                    # Use the most gentle deceleration that still stops in time.
+                    # Natural deceleration first. Light braking only if natural
+                    # forces are not sufficient to stop in remaining distance.
+                    a_natural = calculate_natural_deceleration(speed)
+
+                    if abs(a_natural) >= abs(a_required):
+                        # Natural deceleration alone is enough
+                        desired_a = a_natural
+                    else:
+                        # Need brakes
+                        desired_a = a_required
+
+                    is_throttle_lifted = True
+
+                elif behavior_name == 'Moderate':
+                    # Lifts off throttle immediately and applies exactly
+                    # the required braking force. No coasting, no late braking.
+                    desired_a  = a_required
+                    is_throttle_lifted = True
+
+                elif  behavior_name == 'Aggressive':
+                    
+                    # Maintains speed until forced to brake.
+                    # Only brakes when required deceleration hits the maximum rate.
+                    if aggressive_braking:
+                        desired_a = a_required
+                        is_throttle_lifted = True
+
+                    elif abs(a_required) < abs(behavior['decel_rate']):
+                        desired_a = 0.0
+                        is_throttle_lifted = False
+
+                    else:
+                        aggressive_braking = True
+                        desired_a = a_required
+                        is_throttle_lifted = True
                 
             else:
                 desired_a = speed_error / DT
@@ -315,15 +366,9 @@ def run_simulation(segments, behavior_name, behavior):
             # Modern diesel ECUs cut fuel injection during coasting.
             # Result: FC_rate = 0 for the entire coasting period.
             #
-            # This is the second place behavior enters:
-            #   Eco and Moderate: coast = True  → zero fuel during decel
-            #   Aggressive:       coast = False → fuel burns during decel
-            is_coasting = (
-                seg_type == 'decelerate'
-                and behavior['coast']    # True for eco and moderate only
-                and a < -0.05           # actually decelerating
-                and speed > 1.0         # above minimum speed threshold
-            )
+            # Coasting / fuel cut-off determination
+            # FC = 0 if throttle is lifted (eco and moderate always, aggressive only while braking)
+            is_coasting = (seg_type == 'decelerate' and is_throttle_lifted and speed > 1.0)
 
             # STEP 6: Equation 1 — Traction Force
             #
@@ -377,6 +422,14 @@ def run_simulation(segments, behavior_name, behavior):
                 'distance_m':    round(total_distance, 1),
                 'behavior':      behavior_name,
             })
+            
+            
+            if speed <= 0.01 and target_v <= 0:
+                break
+            
+        
+        if seg_type == 'decelerate' and target_v <= 0:
+            speed = 0.0
 
 
 

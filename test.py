@@ -25,4 +25,22 @@ F_aero = (
 F_resist = F_roll + F_aero
 a_natural = F_resist / mass
 
-print(a_natural)
+
+def calculate_natural_deceleration(speed):
+    """
+    Deceleration when driver lifts off throttle — no engine, no brakes.
+    Only rolling resistance and aerodynamic drag act on the vehicle.
+    These come directly from the resistive terms of Equation 1 (with a=0).
+
+    a_natural = -(F_rolling + F_aero) / mass
+    """
+    F_rolling = JEEPNEY_PARAMS["mass_empty"] * g * JEEPNEY_PARAMS["Crr"]
+    F_aero    = (0.5 * rho
+                 * JEEPNEY_PARAMS["Cd"]
+                 * JEEPNEY_PARAMS["frontal_area"]
+                 * speed ** 2)
+    return -(F_rolling + F_aero) / JEEPNEY_PARAMS["mass_empty"]
+
+
+
+print(calculate_natural_deceleration(v))

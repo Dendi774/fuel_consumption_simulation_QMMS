@@ -232,7 +232,7 @@ def run_simulation(segments, behavior_name, behavior):
                     'accel_ms2':     0.0,
                     'phase':         'idle',
                     'segment_label': label,
-                    'coasting':      False,
+                    'is_fuel_cutoff': False,
                     'F_inertia_N':   0.0,
                     'F_rolling_N':   0.0,
                     'F_aero_N':      0.0,
@@ -261,7 +261,12 @@ def run_simulation(segments, behavior_name, behavior):
         elif seg_type == 'turn':
             target_v = behavior['corner_speed']
         elif seg_type == 'decelerate':
-            target_v = seg.get('target_speed', 0.0)
+            target = seg.get('target_speed', 0.0)
+            
+            if target == "corner_speed":
+                target_v = behavior["corner_speed"]
+            else:
+                target_v = target
         else:
             print(f"  WARNING: Unknown segment type '{seg_type}' — skipping.")
             continue
@@ -350,25 +355,19 @@ def run_simulation(segments, behavior_name, behavior):
             # STEP 4: Accumulate distance
             #
             # d = v × t  (t = 1 second)
-            # Clamped to the remaining segment distance to prevent overshoot.
-            # Without clamping, a fast vehicle would add too much distance
-            # in the last step of each segment.
             dist_step = speed * DT
-            remaining = seg_dist - dist_covered
-            dist_step = min(dist_step, remaining)   # clamp to boundary
+            #remaining = seg_dist - dist_covered
+            #dist_step = min(dist_step, remaining)
 
             dist_covered   += dist_step
             total_distance += dist_step
 
-            # STEP 5: Check for coasting
+            # STEP 5: Check for is_fuel_cutoff during deceleration segments
             #
-            # Coasting = driver lifts off throttle during deceleration.
-            # Modern diesel ECUs cut fuel injection during coasting.
-            # Result: FC_rate = 0 for the entire coasting period.
             #
             # Coasting / fuel cut-off determination
             # FC = 0 if throttle is lifted (eco and moderate always, aggressive only while braking)
-            is_coasting = (seg_type == 'decelerate' and is_throttle_lifted and speed > 1.0)
+            is_fuel_cutoff = (seg_type == 'decelerate' and is_throttle_lifted and speed > 0.01)
 
             # STEP 6: Equation 1 — Traction Force
             #
@@ -377,7 +376,7 @@ def run_simulation(segments, behavior_name, behavior):
             #   → 'v' in F_aero comes from Step 3 (behavior's cruise speed)
             #
             # If coasting, skip — no traction force needed (engine not engaged)
-            if is_coasting:
+            if is_fuel_cutoff:
                 F_traction = 0.0
                 F_inertia  = 0.0
                 F_rolling  = JEEPNEY_PARAMS["mass_empty"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
@@ -393,7 +392,7 @@ def run_simulation(segments, behavior_name, behavior):
             #
             # If coasting → FC_rate = 0  (ECU fuel cut-off)
             # Otherwise   → FC_rate = (F × v) / (η × LHV × 3600)
-            if is_coasting:
+            if is_fuel_cutoff:
                 FC_rate = 0.0
             else:
                 FC_rate = calculate_fuel_rate(F_traction=F_traction, v=speed)
@@ -411,7 +410,7 @@ def run_simulation(segments, behavior_name, behavior):
                 'accel_ms2':     round(a, 3),
                 'phase':         seg_type,
                 'segment_label': label,
-                'coasting':      is_coasting,
+                'is_fuel_cutoff':      is_fuel_cutoff,
                 'F_inertia_N':   round(F_inertia, 1),
                 'F_rolling_N':   round(F_rolling, 1),
                 'F_aero_N':      round(F_aero, 1),

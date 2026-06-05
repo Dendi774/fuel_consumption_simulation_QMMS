@@ -13,7 +13,7 @@ ROUTES = {
             {'type': 'decelerate',  'distance': 80,   'target_speed': 0,  'label': 'Intersection stop - Presidents Ave'},
             {'type': 'idle',        'distance': 0,    'duration': 20,     'label': 'Signal wait - Presidents Ave'},
             {'type': 'accelerate',  'distance': 80,   'label': 'Re-accelerate after Presidents Ave'},
-            {'type': 'decelerate',  'distance': 100,  'target_speed': 8.3, 'label': 'Dr. A. Santos Ave to Ninoy Aquino Ave junction'},
+            {'type': 'decelerate',  'distance': 100,  'target_speed': 'corner_speed', 'label': 'Dr. A. Santos Ave to Ninoy Aquino Ave junction'},
             {'type': 'turn',        'distance': 60,   'label': 'Turn onto Ninoy Aquino Ave'},
             {'type': 'cruise',      'distance': 2000, 'label': 'Ninoy Aquino Ave - NAIA-adjacent heavy traffic'},
             {'type': 'decelerate',  'distance': 60,   'target_speed': 0,  'label': 'Passenger stop 1 - Ninoy Aquino Ave'},

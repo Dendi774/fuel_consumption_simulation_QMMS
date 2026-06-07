@@ -150,6 +150,73 @@ Fuel rate is derived from:
 * CO₂ emission analysis
 * AI driving optimization
 
+# Jeepney Fuel Consumption Simulator
+
+## Folder Structure
+
+```
+jeepney_simulator/
+├── api.py            ← Flask backend (NEW)
+├── index.html        ← Frontend connected to API (NEW)
+├── simulation.py     ← Physics engine
+├── behaviors.py      ← Driving behavior profiles
+├── routes.py         ← Route definitions
+├── vehicle.py        ← Jeepney parameters
+├── main.py           ← Original Streamlit app (optional)
+└── requirements.txt
+```
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+```
+
+## Run
+
+### 1. Start the backend API
+```bash
+python api.py
+```
+Flask will start at http://localhost:5000
+
+### 2. Open the frontend
+Open `index.html` directly in your browser (double-click it).
+
+The sidebar will show **API connected** in green when the backend is reachable.
+
+## API Endpoints
+
+| Method | Endpoint         | Description                    |
+|--------|-----------------|-------------------------------|
+| GET    | /api/routes     | List available routes          |
+| GET    | /api/behaviors  | List driving behavior profiles |
+| POST   | /api/simulate   | Run a simulation               |
+
+### POST /api/simulate — Request body
+```json
+{
+  "route": "route_1",
+  "behavior": "Eco"
+}
+```
+
+### POST /api/simulate — Response
+```json
+{
+  "log":          [...],
+  "total_fuel_L": 0.123456,
+  "economy_kmL":  12.34,
+  "distance_km":  6.24,
+  "duration_s":   845
+}
+```
+
+## Optional: Streamlit app
+```bash
+streamlit run main.py
+```
+
 
 # 📄 License
 

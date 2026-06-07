@@ -1,0 +1,605 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Jeepney Fuel Consumption Simulator</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          'sim-bg':             '#0a0b14',
+          'sim-card':           '#141625',
+          'sim-border':         '#2d2f44',
+          'sim-accent-purple':  '#8b5cf6',
+          'sim-accent-blue':    '#3b82f6',
+          'sim-accent-teal':    '#10b981',
+          'sim-text-muted':     '#94a3b8'
+        }
+      }
+    }
+  }
+</script>
+<style>
+  .neon-gradient-btn { background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); }
+  .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+  .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+  .tab-active   { color: #8b5cf6; border-bottom: 2px solid #8b5cf6; }
+  .tab-inactive { color: #94a3b8; border-bottom: 2px solid transparent; }
+  .road-track   { font-family: monospace; letter-spacing: 2px; font-size: 13px; color: #94a3b8; }
+  @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .live-dot { animation: pulse-dot 1.2s ease-in-out infinite; }
+</style>
+</head>
+<body class="bg-sim-bg text-white font-sans min-h-screen flex">
+
+<!-- ===== SIDEBAR ===== -->
+<aside class="w-64 border-r border-sim-border flex flex-col p-6 space-y-8 shrink-0">
+  <div class="flex items-center space-x-3">
+    <img src="Jeep.png" class="w-8 h-8 rounded object-cover" alt="Jeepney"/>
+    <h1 class="font-bold text-lg tracking-tight">Jeepney <span class="text-sim-accent-purple">Simulator</span></h1>
+  </div>
+
+  <nav class="space-y-6">
+    <div>
+      <p class="text-[10px] uppercase font-bold text-sim-text-muted tracking-widest mb-4">Simulation Controls</p>
+      <div class="space-y-4">
+
+        <!-- Route -->
+        <div class="space-y-2">
+          <label class="text-xs text-sim-text-muted">Select Route</label>
+          <select id="routeSelect" class="w-full bg-sim-card border border-sim-border rounded-md text-sm py-2 px-3 focus:ring-sim-accent-purple focus:border-sim-accent-purple">
+            <option value="route_1">Sucat to Baclaran</option>
+          </select>
+        </div>
+
+        <!-- Behavior -->
+        <div class="space-y-2">
+          <label class="text-xs text-sim-text-muted">Driving Behavior</label>
+          <select id="behaviorSelect" class="w-full bg-sim-card border border-sim-border rounded-md text-sm py-2 px-3 focus:ring-sim-accent-purple focus:border-sim-accent-purple">
+            <option value="Eco">Eco</option>
+            <option value="Moderate">Moderate</option>
+            <option value="Aggressive">Aggressive</option>
+          </select>
+        </div>
+
+        <!-- Speed Slider -->
+        <div class="space-y-3 pt-2">
+          <div class="flex justify-between items-center">
+            <label class="text-xs text-sim-text-muted">Simulation Speed</label>
+            <span id="speedLabel" class="text-xs font-mono">0.10x</span>
+          </div>
+          <input id="simSpeed" class="w-full h-1 bg-sim-border rounded-lg appearance-none cursor-pointer accent-violet-500"
+            type="range" min="0.01" max="2.0" step="0.01" value="0.10"
+            oninput="document.getElementById('speedLabel').textContent = parseFloat(this.value).toFixed(2)+'x'"/>
+          <div class="flex justify-between text-[10px] text-sim-text-muted">
+            <span>0.01x</span><span>1x</span><span>2x</span>
+          </div>
+        </div>
+
+        <button id="runBtn" onclick="startSimulation()"
+          class="w-full neon-gradient-btn py-2.5 rounded-lg flex items-center justify-center space-x-2 font-semibold text-sm hover:opacity-90 transition-opacity">
+          <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          <span id="runBtnLabel">Run Simulation</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Tip -->
+    <div class="bg-sim-card/50 p-4 rounded-lg border border-sim-border/50">
+      <div class="flex items-center space-x-2 mb-2 text-sim-accent-blue">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+        </svg>
+        <span class="text-xs font-bold uppercase">Tip</span>
+      </div>
+      <p class="text-[11px] text-sim-text-muted leading-relaxed">
+        Adjust the route, driving behavior, and speed, then run the simulation to see real-time fuel consumption.
+      </p>
+    </div>
+
+    <!-- API status -->
+    <div id="apiStatus" class="text-[11px] text-sim-text-muted flex items-center space-x-2">
+      <span id="apiDot" class="w-2 h-2 rounded-full bg-yellow-400 inline-block"></span>
+      <span id="apiMsg">Connecting to API…</span>
+    </div>
+  </nav>
+</aside>
+
+<!-- ===== MAIN ===== -->
+<main class="flex-1 flex flex-col p-8 overflow-y-auto custom-scrollbar">
+
+  <!-- Header -->
+  <header class="flex justify-between items-start mb-8">
+    <div class="flex items-center space-x-6">
+      <img src="Jeep.png" class="w-16 h-16 rounded-xl object-cover border border-sim-border" alt="Jeepney"/>
+      <div>
+        <h2 class="text-3xl font-bold tracking-tight">Jeepney Fuel Consumption Simulator</h2>
+        <p class="text-sim-text-muted text-sm mt-1 max-w-xl">
+          Real-time fuel consumption simulation for a modern Philippine jeepney using driver behavior and vehicle dynamics.
+        </p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-3">
+      <button id="stopBtn" onclick="stopSimulation()"
+        class="bg-red-500/10 text-red-400 border border-red-500/20 px-4 py-2 rounded-lg text-sm font-medium flex items-center space-x-2 hidden">
+        <div class="w-2 h-2 bg-red-500 rounded-sm live-dot"></div>
+        <span>Stop</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Tabs -->
+  <div class="flex border-b border-sim-border mb-6 space-x-8">
+    <button onclick="switchTab('dashboard')" id="tab-dashboard"
+      class="pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-inactive">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"
+          stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+      </svg>
+      <span>Dashboard</span>
+    </button>
+    <button onclick="switchTab('realtime')" id="tab-realtime"
+      class="pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-active">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+      </svg>
+      <span>Real-Time Simulation</span>
+    </button>
+    <button onclick="switchTab('rawdata')" id="tab-rawdata"
+      class="pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-inactive">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+          stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+      </svg>
+      <span>Raw Data</span>
+    </button>
+  </div>
+
+  <!-- ===== PANE: REAL-TIME ===== -->
+  <div id="pane-realtime">
+
+    <!-- Gauges card -->
+    <section class="bg-sim-card border border-sim-border rounded-xl p-8 mb-6">
+      <div class="flex items-center space-x-3 mb-8">
+        <svg class="w-5 h-5 text-sim-accent-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+        </svg>
+        <h3 class="text-lg font-bold">Real-Time Vehicle Simulation</h3>
+        <span id="liveIndicator" class="hidden items-center space-x-1 text-xs text-sim-accent-teal font-semibold ml-4 flex">
+          <span class="w-2 h-2 bg-sim-accent-teal rounded-full live-dot inline-block"></span>
+          <span>LIVE</span>
+        </span>
+      </div>
+
+      <!-- Road -->
+      <div class="bg-sim-bg rounded-lg border border-sim-border px-4 py-3 mb-4 overflow-hidden">
+        <div id="roadTrack" class="road-track text-center">Press "Run Simulation" to begin.</div>
+      </div>
+
+      <!-- Progress -->
+      <div class="w-full h-1.5 bg-sim-border rounded-full overflow-hidden mb-8">
+        <div id="progressBar" class="h-full bg-gradient-to-r from-sim-accent-blue to-sim-accent-purple transition-all duration-200" style="width:0%"></div>
+      </div>
+
+      <!-- 3 Gauges -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+        <!-- Speed -->
+        <div class="bg-sim-bg/80 border border-sim-border rounded-xl p-6 flex items-center space-x-6">
+          <div class="bg-sim-accent-purple/10 p-4 rounded-xl">
+            <svg class="w-8 h-8 text-sim-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+            </svg>
+          </div>
+          <div>
+            <p class="text-xs text-sim-text-muted mb-1">Speed</p>
+            <p id="gaugeSpeed" class="text-2xl font-bold">— <span class="text-sm font-medium">km/h</span></p>
+            <div class="w-32 h-1 bg-sim-border mt-3 rounded-full overflow-hidden">
+              <div id="gaugeSpeedBar" class="bg-gradient-to-r from-sim-accent-blue to-sim-accent-purple h-full transition-all duration-200" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fuel -->
+        <div class="bg-sim-bg/80 border border-sim-border rounded-xl p-6 flex items-center space-x-6">
+          <div class="bg-sim-accent-blue/10 p-4 rounded-xl">
+            <svg class="w-8 h-8 text-sim-accent-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"
+                stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+            </svg>
+          </div>
+          <div>
+            <p class="text-xs text-sim-text-muted mb-1">Fuel Used</p>
+            <p id="gaugeFuel" class="text-2xl font-bold">— <span class="text-sm font-medium">L</span></p>
+            <div class="w-32 h-1 bg-sim-border mt-3 rounded-full overflow-hidden">
+              <div id="gaugeFuelBar" class="bg-sim-accent-blue h-full transition-all duration-200" style="width:0%"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Phase -->
+        <div class="bg-sim-bg/80 border border-sim-border rounded-xl p-6 flex items-center space-x-6">
+          <div class="bg-sim-accent-teal/10 p-4 rounded-xl">
+            <svg class="w-8 h-8 text-sim-accent-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+            </svg>
+          </div>
+          <div>
+            <p class="text-xs text-sim-text-muted mb-1">Driving Phase</p>
+            <p id="gaugePhase" class="text-2xl font-bold lowercase">—</p>
+            <div class="w-32 h-1 bg-sim-border mt-3 rounded-full overflow-hidden">
+              <div id="gaugePhaseBar" class="bg-sim-accent-teal h-full transition-all duration-200" style="width:50%"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Segment label -->
+    <div id="segmentLabel" class="text-xs text-sim-text-muted mb-4 italic px-1 hidden"></div>
+
+    <!-- Live speed chart -->
+    <section class="bg-sim-card border border-sim-border rounded-xl p-8 flex-1 flex flex-col">
+      <div class="flex justify-between items-center mb-6">
+        <div class="flex items-center space-x-2">
+          <svg class="w-5 h-5 text-sim-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
+              stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+          </svg>
+          <h3 class="text-md font-bold">Live Speed</h3>
+        </div>
+        <span class="bg-sim-bg border border-sim-border text-xs rounded-md py-1 px-3 text-sim-text-muted">km/h</span>
+      </div>
+      <div style="position:relative; height:280px;">
+        <canvas id="liveSpeedChart"></canvas>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== PANE: DASHBOARD ===== -->
+  <div id="pane-dashboard" class="hidden">
+    <div id="dashboardReady" class="flex flex-col items-center justify-center py-24 text-sim-text-muted">
+      <div class="text-5xl mb-4">J</div>
+      <p class="text-lg font-semibold mb-2">Ready to run your simulation</p>
+      <p class="text-sm">Configure settings on the left panel and click Run Simulation to begin.</p>
+    </div>
+    <div id="dashboardContent" class="hidden space-y-6">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-sim-card border border-sim-border rounded-xl p-5">
+          <p class="text-xs text-sim-text-muted mb-1">Distance</p>
+          <p id="metDistance" class="text-xl font-bold">—</p>
+        </div>
+        <div class="bg-sim-card border border-sim-border rounded-xl p-5">
+          <p class="text-xs text-sim-text-muted mb-1">Total Fuel Used</p>
+          <p id="metFuel" class="text-xl font-bold">—</p>
+        </div>
+        <div class="bg-sim-card border border-sim-border rounded-xl p-5">
+          <p class="text-xs text-sim-text-muted mb-1">Fuel Economy</p>
+          <p id="metEconomy" class="text-xl font-bold">—</p>
+        </div>
+        <div class="bg-sim-card border border-sim-border rounded-xl p-5">
+          <p class="text-xs text-sim-text-muted mb-1">Behavior</p>
+          <p id="metBehavior" class="text-xl font-bold">—</p>
+        </div>
+      </div>
+      <div class="bg-sim-card border border-sim-border rounded-xl p-6">
+        <h3 class="font-bold mb-4">Speed vs Time</h3>
+        <div style="position:relative;height:220px;"><canvas id="dashSpeedChart"></canvas></div>
+      </div>
+      <div class="bg-sim-card border border-sim-border rounded-xl p-6">
+        <h3 class="font-bold mb-4">Cumulative Fuel Consumption</h3>
+        <div style="position:relative;height:220px;"><canvas id="dashFuelChart"></canvas></div>
+      </div>
+      <div class="bg-sim-card border border-sim-border rounded-xl p-6">
+        <h3 class="font-bold mb-4">Traction Force</h3>
+        <div style="position:relative;height:220px;"><canvas id="dashForceChart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PANE: RAW DATA ===== -->
+  <div id="pane-rawdata" class="hidden">
+    <div id="rawReady" class="flex flex-col items-center justify-center py-24 text-sim-text-muted">
+      <p class="text-lg font-semibold">No data yet. Run the simulation first.</p>
+    </div>
+    <div id="rawContent" class="hidden">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="font-bold">Simulation Data</h3>
+        <button onclick="downloadCSV()"
+          class="neon-gradient-btn px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90">
+          ↓ Download CSV
+        </button>
+      </div>
+      <div class="overflow-x-auto rounded-xl border border-sim-border">
+        <table class="w-full text-xs" id="rawTable">
+          <thead class="bg-sim-card sticky top-0"><tr id="rawHead"></tr></thead>
+          <tbody id="rawBody" class="divide-y divide-sim-border/30"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const API_BASE = 'http://localhost:5000';
+
+// ============================================================
+// CHART HELPERS
+// ============================================================
+const CHART_OPTS = {
+  responsive: true, maintainAspectRatio: false,
+  animation: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#1e293b' } },
+    y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#1e293b' } }
+  }
+};
+
+let liveChart = null;
+
+function initLiveChart() {
+  const ctx = document.getElementById('liveSpeedChart').getContext('2d');
+  if (liveChart) liveChart.destroy();
+  liveChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        data: [], borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.08)',
+        fill: true, tension: 0.3, borderWidth: 2.5, pointRadius: 0
+      }]
+    },
+    options: { ...CHART_OPTS, animation: { duration: 0 } }
+  });
+}
+
+function makeDashChart(id, color, data, labels) {
+  const el  = document.getElementById(id);
+  const old = Chart.getChart(el);
+  if (old) old.destroy();
+  new Chart(el.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data, borderColor: color,
+        backgroundColor: color + '18',
+        fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0
+      }]
+    },
+    options: CHART_OPTS
+  });
+}
+
+// ============================================================
+// API HEALTH CHECK
+// ============================================================
+async function checkApi() {
+  try {
+    const res = await fetch(`${API_BASE}/api/routes`);
+    if (!res.ok) throw new Error();
+    const routes = await res.json();
+
+    // Populate route dropdown dynamically
+    const routeLabels = { 'route_1': 'Sucat to Baclaran' };
+    const sel = document.getElementById('routeSelect');
+    sel.innerHTML = routes.map(r => `<option value="${r}">${routeLabels[r] || r}</option>`).join('');
+
+    // Populate behavior dropdown dynamically
+    const bres = await fetch(`${API_BASE}/api/behaviors`);
+    const behaviors = await bres.json();
+    const bsel = document.getElementById('behaviorSelect');
+    bsel.innerHTML = behaviors.map(b => `<option value="${b}">${b}</option>`).join('');
+
+    setApiStatus(true, 'API connected');
+  } catch {
+    setApiStatus(false, 'API offline — start api.py');
+  }
+}
+
+function setApiStatus(ok, msg) {
+  document.getElementById('apiDot').className =
+    `w-2 h-2 rounded-full inline-block ${ok ? 'bg-green-400' : 'bg-red-400'}`;
+  document.getElementById('apiMsg').textContent = msg;
+}
+
+// ============================================================
+// SIMULATION STATE
+// ============================================================
+let simTimer = null, simLog = [], simIdx = 0, simRunning = false;
+
+async function startSimulation() {
+  if (simRunning) { stopSimulation(); return; }
+
+  const route    = document.getElementById('routeSelect').value;
+  const behavior = document.getElementById('behaviorSelect').value;
+  const speedX   = parseFloat(document.getElementById('simSpeed').value);
+
+  // Show loading state
+  setRunBtn(true);
+
+  let data;
+  try {
+    const res = await fetch(`${API_BASE}/api/simulate`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ route, behavior })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      alert('API error: ' + (err.error || res.statusText));
+      setRunBtn(false); return;
+    }
+    data = await res.json();
+  } catch (e) {
+    alert('Could not reach API. Is api.py running?\n\n' + e.message);
+    setRunBtn(false); return;
+  }
+
+  simLog     = data.log;
+  simIdx     = 0;
+  simRunning = true;
+
+  // Populate dashboard summary
+  document.getElementById('metDistance').textContent = data.distance_km.toFixed(2) + ' km';
+  document.getElementById('metFuel').textContent     = (data.total_fuel_L * 1000).toFixed(2) + ' mL';
+  document.getElementById('metEconomy').textContent  = data.economy_kmL.toFixed(2) + ' km/L';
+  document.getElementById('metBehavior').textContent = behavior;
+
+  const times = simLog.map(r => r.time);
+  makeDashChart('dashSpeedChart', '#8b5cf6', simLog.map(r => r.speed_kmh),    times);
+  makeDashChart('dashFuelChart',  '#3b82f6', simLog.map(r => r.total_fuel_L), times);
+  makeDashChart('dashForceChart', '#10b981', simLog.map(r => r.F_traction_N), times);
+
+  buildRawTable(simLog);
+
+  // Reset live chart and switch tab
+  initLiveChart();
+  switchTab('realtime');
+  document.getElementById('stopBtn').classList.remove('hidden');
+  document.getElementById('liveIndicator').classList.remove('hidden');
+
+  const maxFuel = data.total_fuel_L;
+  const maxDist = simLog[simLog.length - 1]?.distance_m || 1;
+
+  const intervalMs = Math.max(10, 50 / speedX);
+  const PHASE_COLORS = {
+    accelerate: '#a855f7', cruise: '#10b981',
+    decelerate: '#f59e0b', turn: '#ec4899', idle: '#6b7280'
+  };
+
+  simTimer = setInterval(() => {
+    if (simIdx >= simLog.length) { finishSimulation(); return; }
+
+    const row      = simLog[simIdx];
+    const progress = row.distance_m / maxDist;
+    const pos      = Math.min(Math.floor(progress * 48), 47);
+    const road     = Array(50).fill('─');
+    road[pos] = 'J';
+
+    document.getElementById('roadTrack').textContent = road.join('');
+    document.getElementById('progressBar').style.width = (progress * 100).toFixed(1) + '%';
+
+    // Speed gauge
+    document.getElementById('gaugeSpeed').innerHTML =
+      `${row.speed_kmh.toFixed(2)} <span class="text-sm font-medium">km/h</span>`;
+    document.getElementById('gaugeSpeedBar').style.width =
+      Math.min(row.speed_kmh / 80 * 100, 100).toFixed(1) + '%';
+
+    // Fuel gauge
+    document.getElementById('gaugeFuel').innerHTML =
+      `${row.total_fuel_L.toFixed(4)} <span class="text-sm font-medium">L</span>`;
+    document.getElementById('gaugeFuelBar').style.width =
+      Math.min(row.total_fuel_L / maxFuel * 100, 100).toFixed(1) + '%';
+
+    // Phase gauge
+    const phase = row.phase;
+    document.getElementById('gaugePhase').textContent = phase;
+    document.getElementById('gaugePhaseBar').style.background = PHASE_COLORS[phase] || '#6b7280';
+
+    // Segment label
+    const segEl = document.getElementById('segmentLabel');
+    segEl.textContent = '📍 ' + row.segment_label;
+    segEl.classList.remove('hidden');
+
+    // Live chart — sample every 5 rows
+    if (simIdx % 5 === 0 || simIdx === simLog.length - 1) {
+      liveChart.data.labels.push(row.time);
+      liveChart.data.datasets[0].data.push(row.speed_kmh);
+      if (liveChart.data.labels.length > 300) {
+        liveChart.data.labels.shift();
+        liveChart.data.datasets[0].data.shift();
+      }
+      liveChart.update('none');
+    }
+
+    simIdx++;
+  }, intervalMs);
+}
+
+function stopSimulation() {
+  if (simTimer) { clearInterval(simTimer); simTimer = null; }
+  simRunning = false;
+  setRunBtn(false);
+  document.getElementById('stopBtn').classList.add('hidden');
+  document.getElementById('liveIndicator').classList.add('hidden');
+}
+
+function finishSimulation() {
+  stopSimulation();
+  document.getElementById('roadTrack').textContent = 'Simulation complete!';
+  document.getElementById('progressBar').style.width = '100%';
+  document.getElementById('dashboardReady').classList.add('hidden');
+  document.getElementById('dashboardContent').classList.remove('hidden');
+  document.getElementById('rawReady').classList.add('hidden');
+  document.getElementById('rawContent').classList.remove('hidden');
+}
+
+function setRunBtn(loading) {
+  const btn   = document.getElementById('runBtn');
+  const label = document.getElementById('runBtnLabel');
+  label.textContent = loading ? 'Loading…' : 'Run Simulation';
+  btn.disabled = loading;
+  btn.style.opacity = loading ? '0.6' : '1';
+}
+
+// ============================================================
+// RAW TABLE
+// ============================================================
+function buildRawTable(log) {
+  if (!log.length) return;
+  const cols = Object.keys(log[0]);
+  document.getElementById('rawHead').innerHTML =
+    cols.map(c => `<th class="px-3 py-2 text-left text-sim-text-muted font-semibold whitespace-nowrap">${c}</th>`).join('');
+  document.getElementById('rawBody').innerHTML =
+    log.slice(0, 500).map(row =>
+      `<tr class="hover:bg-sim-card/50">${
+        cols.map(c => `<td class="px-3 py-1.5 text-sim-text-muted whitespace-nowrap">${row[c]}</td>`).join('')
+      }</tr>`
+    ).join('');
+}
+
+function downloadCSV() {
+  if (!simLog.length) return;
+  const cols = Object.keys(simLog[0]);
+  const csv  = [cols.join(','), ...simLog.map(r => cols.map(c => r[c]).join(','))].join('\n');
+  const a    = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
+    download: 'jeepney_simulation.csv'
+  });
+  a.click();
+}
+
+// ============================================================
+// TAB SWITCHING
+// ============================================================
+function switchTab(tab) {
+  ['dashboard','realtime','rawdata'].forEach(p => {
+    document.getElementById('pane-' + p).classList.add('hidden');
+    document.getElementById('tab-'  + p).className =
+      'pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-inactive';
+  });
+  document.getElementById('pane-' + tab).classList.remove('hidden');
+  document.getElementById('tab-'  + tab).className =
+    'pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-active';
+}
+
+// ============================================================
+// INIT
+// ============================================================
+initLiveChart();
+switchTab('realtime');
+checkApi();
+</script>
+</body>
+</html>

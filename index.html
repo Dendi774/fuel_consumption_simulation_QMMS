@@ -6,6 +6,9 @@
 <title>Jeepney Fuel Consumption Simulator</title>
 <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet"/>
 <script>
   tailwind.config = {
     theme: {
@@ -24,6 +27,18 @@
   }
 </script>
 <style>
+  :root {
+    --sv-sky-top: #020810;
+    --sv-sky-mid: #06111f;
+    --sv-sky-bot: #0d1a2e;
+    --sv-road-top: #0e151f;
+    --sv-road-mid: #141d2a;
+    --sv-road-bot: #1a2537;
+    --sv-accent: #a855f7;
+    --sv-accent2: #e879f9;
+    --sv-glow: rgba(168,85,247,0.6);
+  }
+
   .neon-gradient-btn { background: linear-gradient(90deg, #6366f1 0%, #a855f7 100%); }
   .custom-scrollbar::-webkit-scrollbar { width: 4px; }
   .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
@@ -32,6 +47,377 @@
   .road-track   { font-family: monospace; letter-spacing: 2px; font-size: 13px; color: #94a3b8; }
   @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
   .live-dot { animation: pulse-dot 1.2s ease-in-out infinite; }
+
+  /* ── MAP TAB STYLES ── */
+  #map-container { position:relative; width:100%; height:600px; border-radius:12px; overflow:hidden; }
+  #jeep-map { width:100%; height:100%; }
+
+  /* Mini-map in realtime pane */
+  #rt-map-container { position:relative; width:100%; height:320px; border-radius:10px; overflow:hidden; }
+  #rt-jeep-map { width:100%; height:100%; }
+
+  .maplibregl-ctrl-logo,.maplibregl-ctrl-attrib { display:none !important; }
+  .maplibregl-popup-content {
+    background:rgba(20,22,37,.95) !important; border:1px solid rgba(139,92,246,.3) !important;
+    border-radius:10px !important; color:#cbd5e1 !important; font-family:inherit !important;
+    padding:10px 14px !important; backdrop-filter:blur(14px) !important;
+    box-shadow:0 4px 24px rgba(0,0,0,.7) !important;
+  }
+  .maplibregl-popup-tip { display:none !important; }
+
+  /* map HUD overlay */
+  #map-hud, #rt-map-hud {
+    position:absolute; top:10px; left:10px; z-index:10;
+    display:flex; flex-direction:column; gap:6px; pointer-events:none;
+  }
+  .map-badge {
+    background:rgba(20,22,37,.88); border:1px solid rgba(45,47,68,.9);
+    border-radius:8px; padding:5px 11px; font-size:10px; font-weight:600;
+    letter-spacing:1.4px; text-transform:uppercase; color:#94a3b8;
+    backdrop-filter:blur(14px); white-space:nowrap;
+  }
+  .map-badge span { color:#e2e8f0; }
+
+  #map-view-btns {
+    position:absolute; top:10px; right:10px; z-index:10;
+    display:flex; gap:4px; pointer-events:all;
+  }
+  #rt-map-view-btns {
+    position:absolute; top:10px; right:10px; z-index:10;
+    display:flex; gap:4px; pointer-events:all;
+  }
+  .mvbtn {
+    padding:5px 11px; background:rgba(20,22,37,.88);
+    border:1px solid rgba(45,47,68,.9); border-radius:7px;
+    color:#64748b; font-size:10px; font-weight:600; letter-spacing:1.3px;
+    text-transform:uppercase; cursor:pointer; transition:all .15s;
+    backdrop-filter:blur(14px);
+  }
+  .mvbtn.active { background:rgba(139,92,246,.22); color:#c4b5fd; border-color:rgba(139,92,246,.4); }
+  .mvbtn:hover:not(.active) { background:rgba(139,92,246,.1); color:#a78bfa; }
+
+  /* ══════════════════════════════════════════════════
+     IMMERSIVE STREET VIEW  — Google Maps-style
+  ══════════════════════════════════════════════════ */
+  #sv-wrap, #rt-sv-wrap {
+    position:absolute; inset:0; z-index:20; display:none;
+    flex-direction:column; border-radius:12px; overflow:hidden;
+    background: #020810;
+  }
+  #sv-wrap.show, #rt-sv-wrap.show { display:flex; }
+
+  /* Sky with atmospheric depth gradient */
+  .sv-sky {
+    position:absolute; top:0; left:0; right:0; height:46%;
+    background: linear-gradient(180deg,
+      #010608 0%, #020d1a 18%, #041525 40%,
+      #071c30 65%, #0c2240 85%, #102840 100%);
+    overflow:hidden;
+  }
+
+  /* Sun / Moon glow */
+  .sv-sunmoon {
+    position:absolute; width:80px; height:80px;
+    border-radius:50%;
+    background: radial-gradient(circle, rgba(255,180,50,.15) 0%, rgba(255,120,20,.06) 40%, transparent 70%);
+    filter:blur(12px);
+    top: 20%; right: 22%;
+  }
+
+  /* Atmospheric haze near horizon */
+  .sv-haze {
+    position:absolute; bottom:0; left:0; right:0; height:40%;
+    background: linear-gradient(180deg, transparent 0%, rgba(10,20,40,.5) 60%, rgba(15,30,55,.9) 100%);
+  }
+
+  /* Stars canvas */
+  .sv-stars {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    pointer-events:none;
+  }
+
+  /* Ground / road section */
+  .sv-ground {
+    position:absolute; bottom:0; left:0; right:0; top:46%;
+    background: linear-gradient(180deg,
+      #081220 0%, #0c1a2e 20%, #111f30 40%,
+      #162436 70%, #1c2c40 100%);
+    overflow:hidden;
+  }
+
+  /* Perspective road surface */
+  .sv-road-surface {
+    position:absolute;
+    bottom:0; left:50%; transform:translateX(-50%);
+    width:100%; height:100%;
+    overflow:hidden;
+  }
+
+  /* Road plane using CSS perspective */
+  .sv-road-plane {
+    position:absolute; bottom:0; left:50%;
+    transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    transform-origin: bottom center;
+    width:900px; height:500px;
+    background: linear-gradient(180deg, #0e1824 0%, #141f2e 30%, #1a2638 60%, #1e2c40 100%);
+  }
+
+  /* Center lane lines — vanishing point perspective */
+  .sv-lane-lines {
+    position:absolute; bottom:0; left:50%;
+    transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    transform-origin: bottom center;
+    width:900px; height:500px;
+    pointer-events:none;
+  }
+
+  /* Asphalt texture overlay */
+  .sv-asphalt-overlay {
+    position:absolute; bottom:0; left:50%;
+    transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    transform-origin: bottom center;
+    width:900px; height:500px;
+    background: repeating-linear-gradient(
+      0deg, transparent, transparent 8px,
+      rgba(255,255,255,.012) 8px, rgba(255,255,255,.012) 9px
+    ), repeating-linear-gradient(
+      90deg, transparent, transparent 60px,
+      rgba(255,255,255,.008) 60px, rgba(255,255,255,.008) 62px
+    );
+  }
+
+  /* Side curbs */
+  .sv-curb-left, .sv-curb-right {
+    position:absolute; bottom:0;
+    height:100%;
+    transform-origin: bottom center;
+  }
+  .sv-curb-left {
+    left:50%; transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    margin-left:-290px; width:20px;
+    background: linear-gradient(180deg, #1a2840 0%, #24364e 100%);
+  }
+  .sv-curb-right {
+    left:50%; transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    margin-left:270px; width:20px;
+    background: linear-gradient(180deg, #1a2840 0%, #24364e 100%);
+  }
+
+  /* Sidewalk beyond curbs */
+  .sv-sidewalk-l, .sv-sidewalk-r {
+    position:absolute; bottom:0; height:100%;
+    transform-origin: bottom center;
+  }
+  .sv-sidewalk-l {
+    left:50%; transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    margin-left:-410px; width:120px;
+    background: linear-gradient(180deg, #101c2e 0%, #162036 100%);
+  }
+  .sv-sidewalk-r {
+    left:50%; transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    margin-left:290px; width:120px;
+    background: linear-gradient(180deg, #101c2e 0%, #162036 100%);
+  }
+
+  /* Route highlight strip down road center */
+  .sv-route-strip {
+    position:absolute; bottom:0; left:50%;
+    transform: translateX(-50%) perspective(400px) rotateX(65deg);
+    transform-origin: bottom center;
+    width:12px; height:500px;
+    background: linear-gradient(0deg, var(--sv-accent2) 0%, var(--sv-accent) 40%, transparent 80%);
+    opacity: 0.7; filter: blur(2px);
+  }
+
+  /* Road dashes canvas (animated) */
+  .sv-dash-canvas {
+    position:absolute; bottom:0; left:0; right:0;
+    height:100%; pointer-events:none;
+  }
+
+  /* Horizon glow line */
+  .sv-horizon {
+    position:absolute; top:46%; left:0; right:0; height:3px;
+    background: linear-gradient(90deg, transparent 0%, var(--sv-accent) 20%,
+      var(--sv-accent2) 50%, var(--sv-accent) 80%, transparent 100%);
+    filter: blur(3px); opacity:0.5;
+  }
+
+  /* ─── Building layers ─── */
+  .sv-bldgs-far  { position:absolute; bottom:46%; left:0; right:0; height:130px; display:flex; align-items:flex-end; overflow:hidden; pointer-events:none; }
+  .sv-bldgs-mid  { position:absolute; bottom:46%; left:0; right:0; height:180px; display:flex; align-items:flex-end; overflow:hidden; pointer-events:none; }
+  .sv-bldgs-near { position:absolute; bottom:46%; left:0; right:0; height:240px; display:flex; align-items:flex-end; overflow:hidden; pointer-events:none; }
+
+  .bldg-far  { flex-shrink:0; background:linear-gradient(180deg,#0d1826 0%,#091220 100%); border-top:1px solid rgba(50,80,130,.1); position:relative; animation:bldg-drift-far 18s linear infinite; }
+  .bldg-mid  { flex-shrink:0; background:linear-gradient(180deg,#101f34 0%,#0c1726 100%); border-top:1px solid rgba(60,100,160,.12); position:relative; animation:bldg-drift-mid 10s linear infinite; }
+  .bldg-near { flex-shrink:0; background:linear-gradient(180deg,#132538 0%,#0f1e30 100%); border-top:1px solid rgba(80,120,200,.15); position:relative; animation:bldg-drift-near 6s linear infinite; }
+
+  @keyframes bldg-drift-far  { 0%{transform:translateX(0)}  100%{transform:translateX(-60px)} }
+  @keyframes bldg-drift-mid  { 0%{transform:translateX(0)}  100%{transform:translateX(-80px)} }
+  @keyframes bldg-drift-near { 0%{transform:translateX(0)}  100%{transform:translateX(-120px)} }
+
+  /* Street lights */
+  .sv-light-pole {
+    position:absolute; bottom:46%; z-index:5;
+    display:flex; flex-direction:column; align-items:center;
+    animation:pole-drift 5s linear infinite;
+  }
+  @keyframes pole-drift { 0%{transform:translateX(0) scale(1)} 100%{transform:translateX(-180px) scale(1.15)} }
+  .sv-light-arm  { width:30px; height:3px; background:#1a2840; transform-origin:right; transform:rotate(-15deg); margin-bottom:-1px; }
+  .sv-light-lamp { width:12px; height:7px; border-radius:3px; background:rgba(255,220,100,.6); box-shadow:0 0 12px 4px rgba(255,200,50,.3), 0 0 30px 8px rgba(255,180,20,.1); }
+  .sv-light-shaft { width:60px; height:90px; position:absolute; top:7px; background:linear-gradient(180deg, rgba(255,200,50,.06) 0%, transparent 100%); clip-path:polygon(30% 0%, 70% 0%, 100% 100%, 0% 100%); }
+  .sv-light-stick { width:3px; flex:1; background:linear-gradient(180deg,#1e2e46,#0e1a28); }
+
+  /* Trees silhouette */
+  .sv-tree {
+    position:absolute; bottom:46%; z-index:4;
+    animation:tree-drift 7s linear infinite;
+  }
+  @keyframes tree-drift { 0%{transform:translateX(0)} 100%{transform:translateX(-200px)} }
+
+  /* ─── Signs / overlays ─── */
+  .sv-streetname-sign {
+    position:absolute; top:14px; left:50%; transform:translateX(-50%);
+    background:rgba(10,14,25,.9); border:1px solid rgba(139,92,246,.4);
+    border-radius:8px; padding:5px 18px; font-size:11px; font-weight:700;
+    letter-spacing:2px; color:#c4b5fd; text-transform:uppercase; white-space:nowrap;
+    backdrop-filter:blur(16px); z-index:30;
+    box-shadow: 0 0 20px rgba(139,92,246,.2);
+  }
+
+  /* Nav crosshair */
+  .sv-crosshair {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:50px; height:50px; pointer-events:none;
+  }
+  .sv-crosshair::before,.sv-crosshair::after { content:''; position:absolute; background:rgba(168,85,247,.35); }
+  .sv-crosshair::before { top:50%; left:50%; transform:translate(-50%,-50%); width:1px; height:18px; }
+  .sv-crosshair::after  { top:50%; left:50%; transform:translate(-50%,-50%); width:18px; height:1px; }
+
+  /* Corner brackets */
+  .sv-corner { position:absolute; width:16px; height:16px; }
+  .sv-corner.tl { top:10px;    left:10px;  border-top:2px solid rgba(139,92,246,.4); border-left:2px solid rgba(139,92,246,.4); }
+  .sv-corner.tr { top:10px;    right:10px; border-top:2px solid rgba(139,92,246,.4); border-right:2px solid rgba(139,92,246,.4); }
+  .sv-corner.bl { bottom:54px; left:10px;  border-bottom:2px solid rgba(139,92,246,.4); border-left:2px solid rgba(139,92,246,.4); }
+  .sv-corner.br { bottom:54px; right:10px; border-bottom:2px solid rgba(139,92,246,.4); border-right:2px solid rgba(139,92,246,.4); }
+
+  /* Scan line effect */
+  .sv-scanlines {
+    position:absolute; inset:0; pointer-events:none; z-index:25;
+    background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.06) 2px, rgba(0,0,0,.06) 4px);
+  }
+
+  /* Vignette */
+  .sv-vignette {
+    position:absolute; inset:0; pointer-events:none; z-index:26;
+    background: radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,.7) 100%);
+  }
+
+  /* ─── Info bar ─── */
+  .sv-info-bar {
+    padding:10px 16px; background:rgba(8,12,22,.97);
+    border-top:1px solid rgba(45,47,68,.8);
+    display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+    backdrop-filter:blur(20px); z-index:30; position:relative; flex-shrink:0;
+  }
+  .sv-tag { display:flex; flex-direction:column; gap:2px; }
+  .sv-tag-lbl { font-size:9px; letter-spacing:1.8px; text-transform:uppercase; color:#2a3a5a; font-weight:700; }
+  .sv-tag-val { font-family:'Share Tech Mono',monospace; font-size:13px; color:#a0b8d8; }
+
+  /* Stop nav buttons */
+  .sv-nav-btns {
+    position:absolute; bottom:10px; left:50%; transform:translateX(-50%);
+    display:flex; gap:6px; pointer-events:all; z-index:30;
+  }
+  .sv-nav-btn {
+    padding:4px 12px; background:rgba(10,14,25,.88);
+    border:1px solid rgba(139,92,246,.35); border-radius:7px;
+    color:#a855f7; font-size:10px; font-weight:700; letter-spacing:1.5px; cursor:pointer;
+    transition:all .15s; backdrop-filter:blur(12px);
+  }
+  .sv-nav-btn:hover { background:rgba(139,92,246,.2); color:#d4b8ff; }
+
+  /* Progress dots */
+  .sv-dots {
+    position:absolute; bottom:38px; left:50%; transform:translateX(-50%);
+    display:flex; gap:5px; z-index:30;
+  }
+
+  /* ─── Mini-map section in real-time pane ─── */
+  .rt-map-section {
+    background: var(--tw-bg-opacity, #141625);
+    border: 1px solid #2d2f44;
+    border-radius: 12px; overflow:hidden;
+  }
+
+  /* ─── Physics panel ─── */
+  #physicsPanel {
+    display:grid; grid-template-columns:1fr 1fr;
+    gap:10px; padding:14px;
+  }
+  .phy-card {
+    background:rgba(10,11,20,.7); border:1px solid rgba(45,47,68,.7);
+    border-radius:8px; padding:10px 12px;
+  }
+  .phy-label { font-size:9px; letter-spacing:1.5px; text-transform:uppercase; color:#3d5080; font-weight:700; }
+  .phy-val   { font-family:'Share Tech Mono',monospace; font-size:14px; color:#8db8e0; margin-top:2px; }
+  .phy-bar-track { height:2px; background:#1e2a3a; border-radius:2px; margin-top:6px; overflow:hidden; }
+  .phy-bar-fill  { height:100%; border-radius:2px; transition:width .3s ease; }
+
+  /* ─── 3D Jeepney marker ─── */
+  .jeep3d-wrap {
+    width:56px; height:40px; position:relative; cursor:pointer;
+    filter:drop-shadow(0 4px 12px rgba(139,92,246,.7));
+    animation:jeep3d-float 2.2s ease-in-out infinite;
+  }
+  @keyframes jeep3d-float {
+    0%,100% { transform:translateY(0);   filter:drop-shadow(0 4px 14px rgba(139,92,246,.7)); }
+    50%      { transform:translateY(-4px); filter:drop-shadow(0 8px 18px rgba(139,92,246,.9)); }
+  }
+  .jeep3d-ring {
+    position:absolute; bottom:-6px; left:50%; transform:translateX(-50%);
+    width:32px; height:10px; border-radius:50%;
+    background:rgba(139,92,246,.35);
+    animation:jeep3d-shadow 2.2s ease-in-out infinite;
+  }
+  @keyframes jeep3d-shadow {
+    0%,100% { transform:translateX(-50%) scaleX(1);   opacity:.4; }
+    50%      { transform:translateX(-50%) scaleX(.65); opacity:.2; }
+  }
+
+  /* light mode overrides */
+  .map-light .map-badge {
+    background:rgba(255,255,255,.88); border-color:rgba(200,200,220,.9); color:#475569;
+  }
+  .map-light .map-badge span { color:#1e293b; }
+  .map-light .mvbtn {
+    background:rgba(255,255,255,.88); border-color:rgba(200,200,220,.9); color:#64748b;
+  }
+  .map-light .mvbtn.active { background:rgba(139,92,246,.18); color:#6d28d9; border-color:rgba(139,92,246,.5); }
+
+ /* 3d and 2d button icons */
+  .view-switch {
+  position: relative; display: flex; width: 70px; height: 26px;
+  background: rgba(20,22,37,.88); border: 1px solid rgba(45,47,68,.9);
+  border-radius: 7px; cursor: pointer; backdrop-filter: blur(14px);
+  overflow: hidden;
+  }
+  .view-switch-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 33px; height: 20px; border-radius: 5px;
+    background: rgba(139,92,246,.25); border: 1px solid rgba(139,92,246,.45);
+    transition: transform .25s ease;
+  }
+  .view-switch.is-3d .view-switch-thumb { transform: translateX(34px); }
+  .view-switch-label {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 700; letter-spacing: 1.3px;
+    color: #64748b; z-index: 1; transition: color .2s;
+  }
+  .view-switch.is-3d .view-switch-label:first-of-type { color: #64748b; }
+  .view-switch:not(.is-3d) .view-switch-label:first-of-type { color: #c4b5fd; }
+  .view-switch.is-3d .view-switch-label:last-of-type { color: #c4b5fd; }
+  .view-switch:not(.is-3d) .view-switch-label:last-of-type { color: #64748b; }
 </style>
 </head>
 <body class="bg-sim-bg text-white font-sans min-h-screen flex">
@@ -47,16 +433,15 @@
     <div>
       <p class="text-[10px] uppercase font-bold text-sim-text-muted tracking-widest mb-4">Simulation Controls</p>
       <div class="space-y-4">
-
-        <!-- Route -->
         <div class="space-y-2">
           <label class="text-xs text-sim-text-muted">Select Route</label>
           <select id="routeSelect" class="w-full bg-sim-card border border-sim-border rounded-md text-sm py-2 px-3 focus:ring-sim-accent-purple focus:border-sim-accent-purple">
             <option value="route_1">Sucat to Baclaran</option>
+            <option value="route_2">sucat to bicutan</option>
+            <option value="route_3">sucat to kabihasnan</option>
+            <option value="route_4">baclaran to kabihasnan</option>
           </select>
         </div>
-
-        <!-- Behavior -->
         <div class="space-y-2">
           <label class="text-xs text-sim-text-muted">Driving Behavior</label>
           <select id="behaviorSelect" class="w-full bg-sim-card border border-sim-border rounded-md text-sm py-2 px-3 focus:ring-sim-accent-purple focus:border-sim-accent-purple">
@@ -65,8 +450,6 @@
             <option value="Aggressive">Aggressive</option>
           </select>
         </div>
-
-        <!-- Speed Slider -->
         <div class="space-y-3 pt-2">
           <div class="flex justify-between items-center">
             <label class="text-xs text-sim-text-muted">Simulation Speed</label>
@@ -79,7 +462,6 @@
             <span>0.01x</span><span>1x</span><span>2x</span>
           </div>
         </div>
-
         <button id="runBtn" onclick="startSimulation()"
           class="w-full neon-gradient-btn py-2.5 rounded-lg flex items-center justify-center space-x-2 font-semibold text-sm hover:opacity-90 transition-opacity">
           <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -87,8 +469,6 @@
         </button>
       </div>
     </div>
-
-    <!-- Tip -->
     <div class="bg-sim-card/50 p-4 rounded-lg border border-sim-border/50">
       <div class="flex items-center space-x-2 mb-2 text-sim-accent-blue">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -100,8 +480,6 @@
         Adjust the route, driving behavior, and speed, then run the simulation to see real-time fuel consumption.
       </p>
     </div>
-
-    <!-- API status -->
     <div id="apiStatus" class="text-[11px] text-sim-text-muted flex items-center space-x-2">
       <span id="apiDot" class="w-2 h-2 rounded-full bg-yellow-400 inline-block"></span>
       <span id="apiMsg">Connecting to API…</span>
@@ -112,7 +490,6 @@
 <!-- ===== MAIN ===== -->
 <main class="flex-1 flex flex-col p-8 overflow-y-auto custom-scrollbar">
 
-  <!-- Header -->
   <header class="flex justify-between items-start mb-8">
     <div class="flex items-center space-x-6">
       <img src="Jeep.png" class="w-16 h-16 rounded-xl object-cover border border-sim-border" alt="Jeepney"/>
@@ -159,7 +536,9 @@
     </button>
   </div>
 
-  <!-- ===== PANE: REAL-TIME ===== -->
+  <!-- ═══════════════════════════════════════
+       PANE: REAL-TIME  (now includes mini-map)
+  ═══════════════════════════════════════ -->
   <div id="pane-realtime">
 
     <!-- Gauges card -->
@@ -174,20 +553,13 @@
           <span>LIVE</span>
         </span>
       </div>
-
-      <!-- Road -->
       <div class="bg-sim-bg rounded-lg border border-sim-border px-4 py-3 mb-4 overflow-hidden">
         <div id="roadTrack" class="road-track text-center">Press "Run Simulation" to begin.</div>
       </div>
-
-      <!-- Progress -->
       <div class="w-full h-1.5 bg-sim-border rounded-full overflow-hidden mb-8">
         <div id="progressBar" class="h-full bg-gradient-to-r from-sim-accent-blue to-sim-accent-purple transition-all duration-200" style="width:0%"></div>
       </div>
-
-      <!-- 3 Gauges -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <!-- Speed -->
         <div class="bg-sim-bg/80 border border-sim-border rounded-xl p-6 flex items-center space-x-6">
           <div class="bg-sim-accent-purple/10 p-4 rounded-xl">
@@ -203,7 +575,6 @@
             </div>
           </div>
         </div>
-
         <!-- Fuel -->
         <div class="bg-sim-bg/80 border border-sim-border rounded-xl p-6 flex items-center space-x-6">
           <div class="bg-sim-accent-blue/10 p-4 rounded-xl">
@@ -220,7 +591,6 @@
             </div>
           </div>
         </div>
-
         <!-- Phase -->
         <div class="bg-sim-bg/80 border border-sim-border rounded-xl p-6 flex items-center space-x-6">
           <div class="bg-sim-accent-teal/10 p-4 rounded-xl">
@@ -237,33 +607,157 @@
           </div>
         </div>
       </div>
-    </section>
-
-    <!-- Segment label -->
-    <div id="segmentLabel" class="text-xs text-sim-text-muted mb-4 italic px-1 hidden"></div>
-
-    <!-- Live speed chart -->
-    <section class="bg-sim-card border border-sim-border rounded-xl p-8 flex-1 flex flex-col">
-      <div class="flex justify-between items-center mb-6">
-        <div class="flex items-center space-x-2">
-          <svg class="w-5 h-5 text-sim-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
+      <!-- Live Route Map (full-width, below simulation) -->
+    <section class="bg-sim-card border border-sim-border rounded-xl overflow-hidden">
+      <div class="flex items-center justify-between px-5 py-3 border-b border-sim-border gap-2">
+        <div class="flex items-center gap-2">
+          <svg class="w-4 h-4 text-sim-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"
               stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
           </svg>
-          <h3 class="text-md font-bold">Live Speed</h3>
+          <span class="text-sm font-bold">Live Route Map</span>
+          <span id="rt-mapRouteName" class="text-[10px] text-sim-text-muted bg-sim-bg border border-sim-border rounded px-2 py-0.5">Sucat → Baclaran</span>
         </div>
-        <span class="bg-sim-bg border border-sim-border text-xs rounded-md py-1 px-3 text-sim-text-muted">km/h</span>
+        <div class="flex gap-2">
+          <div class="view-switch" id="rt-view-switch" onclick="toggleRtMapView()">
+            <div class="view-switch-thumb" id="rt-view-switch-thumb"></div>
+            <span class="view-switch-label" data-active="true">2D</span>
+            <span class="view-switch-label">3D</span>
+          </div>
+        </div>
       </div>
-      <div style="position:relative; height:280px;">
-        <canvas id="liveSpeedChart"></canvas>
+      <div id="rt-map-container">
+        <div id="rt-jeep-map"></div>
+        <div id="rt-map-hud"></div>
+        <div id="rt-map-view-btns"></div>
+        <div id="rt-sv-wrap">
+          <div style="position:relative;flex:1;overflow:hidden;">
+            <div class="sv-sky" id="rt-sv-sky">
+              <canvas class="sv-stars" id="rt-sv-stars"></canvas>
+              <div class="sv-sunmoon"></div>
+              <div class="sv-haze"></div>
+            </div>
+            <div class="sv-ground">
+              <div class="sv-road-surface">
+                <div class="sv-sidewalk-l"></div>
+                <div class="sv-sidewalk-r"></div>
+                <div class="sv-curb-left"></div>
+                <div class="sv-curb-right"></div>
+                <div class="sv-road-plane"></div>
+                <div class="sv-asphalt-overlay"></div>
+                <canvas class="sv-dash-canvas" id="rt-sv-dash"></canvas>
+                <div class="sv-route-strip"></div>
+              </div>
+              <div class="sv-bldgs-far" id="rt-bldgs-far"></div>
+              <div class="sv-bldgs-mid" id="rt-bldgs-mid"></div>
+              <div class="sv-bldgs-near" id="rt-bldgs-near"></div>
+              <div id="rt-sv-lights"></div>
+              <div id="rt-sv-trees"></div>
+            </div>
+            <div class="sv-horizon" id="rt-sv-horizon"></div>
+            <div class="sv-scanlines"></div>
+            <div class="sv-vignette"></div>
+            <div class="sv-corner tl"></div>
+            <div class="sv-corner tr"></div>
+            <div class="sv-corner bl"></div>
+            <div class="sv-corner br"></div>
+            <div class="sv-crosshair"></div>
+            <div class="sv-streetname-sign" id="rt-sv-streetname">Parañaque — Street View</div>
+            <div class="sv-nav-btns">
+              <button class="sv-nav-btn" onclick="svNav('rt','prev')">← PREV</button>
+              <button class="sv-nav-btn" onclick="svNav('rt','next')">NEXT →</button>
+              <button class="sv-nav-btn" onclick="setRtMapView('2d')" style="color:#f472b6">✕ MAP</button>
+            </div>
+            <div class="sv-dots" id="rt-sv-dots"></div>
+          </div>
+          <div class="sv-info-bar">
+            <div class="sv-tag"><div class="sv-tag-lbl">Location</div><div class="sv-tag-val" id="rt-sv-loc">—</div></div>
+            <div class="sv-tag"><div class="sv-tag-lbl">Coords</div><div class="sv-tag-val" id="rt-sv-coord">—</div></div>
+            <div class="sv-tag"><div class="sv-tag-lbl">Stop</div><div class="sv-tag-val" id="rt-sv-stop">—</div></div>
+            <div class="sv-tag"><div class="sv-tag-lbl">Heading</div><div class="sv-tag-val" id="rt-sv-heading">—</div></div>
+          </div>
+        </div>
       </div>
     </section>
-  </div>
 
-  <!-- ===== PANE: DASHBOARD ===== -->
+  </div><!-- /pane-realtime -->
+    </section>
+
+    <div id="segmentLabel" class="text-xs text-sim-text-muted mb-4 italic px-1 hidden"></div>
+
+    <!-- Physics + Chart row -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
+
+      <!-- Physics panel -->
+      <section class="bg-sim-card border border-sim-border rounded-xl overflow-hidden">
+        <div class="px-5 py-3 border-b border-sim-border flex items-center gap-2">
+          <svg class="w-4 h-4 text-sim-accent-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+          </svg>
+          <span class="text-sm font-bold">Physics Engine</span>
+        </div>
+        <div id="physicsPanel">
+          <div class="phy-card">
+            <div class="phy-label">F Traction</div>
+            <div class="phy-val" id="phy-ftract">— N</div>
+            <div class="phy-bar-track"><div class="phy-bar-fill bg-violet-500" id="phy-ftract-bar" style="width:0%"></div></div>
+          </div>
+          <div class="phy-card">
+            <div class="phy-label">F Inertia</div>
+            <div class="phy-val" id="phy-finert">— N</div>
+            <div class="phy-bar-track"><div class="phy-bar-fill bg-blue-500" id="phy-finert-bar" style="width:0%"></div></div>
+          </div>
+          <div class="phy-card">
+            <div class="phy-label">F Aero</div>
+            <div class="phy-val" id="phy-faero">— N</div>
+            <div class="phy-bar-track"><div class="phy-bar-fill bg-cyan-500" id="phy-faero-bar" style="width:0%"></div></div>
+          </div>
+          <div class="phy-card">
+            <div class="phy-label">F Rolling</div>
+            <div class="phy-val" id="phy-froll">— N</div>
+            <div class="phy-bar-track"><div class="phy-bar-fill bg-teal-500" id="phy-froll-bar" style="width:0%"></div></div>
+          </div>
+          <div class="phy-card">
+            <div class="phy-label">FC Rate</div>
+            <div class="phy-val" id="phy-fcrate">— mL/s</div>
+            <div class="phy-bar-track"><div class="phy-bar-fill bg-amber-500" id="phy-fcrate-bar" style="width:0%"></div></div>
+          </div>
+          <div class="phy-card">
+            <div class="phy-label">Acceleration</div>
+            <div class="phy-val" id="phy-accel">— m/s²</div>
+            <div class="phy-bar-track"><div class="phy-bar-fill bg-pink-500" id="phy-accel-bar" style="width:0%"></div></div>
+          </div>
+        </div>
+        <div class="px-4 pb-3">
+          <div class="flex items-center gap-2 text-[10px] text-sim-text-muted">
+            <span id="phy-coasting" class="px-2 py-0.5 rounded bg-sim-bg border border-sim-border font-mono">THROTTLE ON</span>
+            <span id="phy-power" class="font-mono text-sim-text-muted">P: — W</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Live speed chart -->
+      <section class="bg-sim-card border border-sim-border rounded-xl p-5">
+        <div class="flex justify-between items-center mb-4">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-sim-accent-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/>
+            </svg>
+            <span class="text-sm font-bold">Live Speed</span>
+          </div>
+          <span class="bg-sim-bg border border-sim-border text-xs rounded-md py-1 px-3 text-sim-text-muted">km/h</span>
+        </div>
+        <div style="position:relative;height:200px;">
+          <canvas id="liveSpeedChart"></canvas>
+        </div>
+      </section>
+
+    </div>
+
+  <!-- ═══════════════ PANE: DASHBOARD ═══════════════ -->
   <div id="pane-dashboard" class="hidden">
     <div id="dashboardReady" class="flex flex-col items-center justify-center py-24 text-sim-text-muted">
-      <div class="text-5xl mb-4">J</div>
+      <div class="text-5xl mb-4">🚐</div>
       <p class="text-lg font-semibold mb-2">Ready to run your simulation</p>
       <p class="text-sm">Configure settings on the left panel and click Run Simulation to begin.</p>
     </div>
@@ -301,7 +795,7 @@
     </div>
   </div>
 
-  <!-- ===== PANE: RAW DATA ===== -->
+  <!-- ═══════════════ PANE: RAW DATA ═══════════════ -->
   <div id="pane-rawdata" class="hidden">
     <div id="rawReady" class="flex flex-col items-center justify-center py-24 text-sim-text-muted">
       <p class="text-lg font-semibold">No data yet. Run the simulation first.</p>
@@ -309,10 +803,7 @@
     <div id="rawContent" class="hidden">
       <div class="flex justify-between items-center mb-4">
         <h3 class="font-bold">Simulation Data</h3>
-        <button onclick="downloadCSV()"
-          class="neon-gradient-btn px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90">
-          ↓ Download CSV
-        </button>
+        <button onclick="downloadCSV()" class="neon-gradient-btn px-4 py-2 rounded-lg text-sm font-semibold hover:opacity-90">↓ Download CSV</button>
       </div>
       <div class="overflow-x-auto rounded-xl border border-sim-border">
         <table class="w-full text-xs" id="rawTable">
@@ -323,283 +814,833 @@
     </div>
   </div>
 
+
 </main>
 
 <script>
-// ============================================================
+// ════════════════════════════════════════════════════════════
 // CONFIG
-// ============================================================
+// ════════════════════════════════════════════════════════════
 const API_BASE = 'http://localhost:5000';
 
-// ============================================================
+// ════════════════════════════════════════════════════════════
 // CHART HELPERS
-// ============================================================
+// ════════════════════════════════════════════════════════════
 const CHART_OPTS = {
-  responsive: true, maintainAspectRatio: false,
-  animation: false,
-  plugins: { legend: { display: false } },
-  scales: {
-    x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#1e293b' } },
-    y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#1e293b' } }
+  responsive:true, maintainAspectRatio:false,
+  animation:false,
+  plugins:{ legend:{ display:false } },
+  scales:{
+    x:{ ticks:{color:'#64748b',font:{size:10}}, grid:{color:'#1e293b'} },
+    y:{ ticks:{color:'#64748b',font:{size:10}}, grid:{color:'#1e293b'} }
   }
 };
-
 let liveChart = null;
-
 function initLiveChart() {
   const ctx = document.getElementById('liveSpeedChart').getContext('2d');
   if (liveChart) liveChart.destroy();
   liveChart = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels: [],
-      datasets: [{
-        data: [], borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59,130,246,0.08)',
-        fill: true, tension: 0.3, borderWidth: 2.5, pointRadius: 0
-      }]
-    },
-    options: { ...CHART_OPTS, animation: { duration: 0 } }
+    type:'line',
+    data:{labels:[],datasets:[{data:[],borderColor:'#3b82f6',backgroundColor:'rgba(59,130,246,0.08)',fill:true,tension:0.3,borderWidth:2.5,pointRadius:0}]},
+    options:{...CHART_OPTS,animation:{duration:0}}
   });
 }
-
 function makeDashChart(id, color, data, labels) {
-  const el  = document.getElementById(id);
-  const old = Chart.getChart(el);
-  if (old) old.destroy();
-  new Chart(el.getContext('2d'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        data, borderColor: color,
-        backgroundColor: color + '18',
-        fill: true, tension: 0.3, borderWidth: 2, pointRadius: 0
-      }]
-    },
-    options: CHART_OPTS
-  });
+  const el=document.getElementById(id); const old=Chart.getChart(el); if(old)old.destroy();
+  new Chart(el.getContext('2d'),{type:'line',data:{labels,datasets:[{data,borderColor:color,backgroundColor:color+'18',fill:true,tension:0.3,borderWidth:2,pointRadius:0}]},options:CHART_OPTS});
 }
 
-// ============================================================
+// ════════════════════════════════════════════════════════════
 // API HEALTH CHECK
-// ============================================================
+// ════════════════════════════════════════════════════════════
 async function checkApi() {
   try {
     const res = await fetch(`${API_BASE}/api/routes`);
     if (!res.ok) throw new Error();
     const routes = await res.json();
-
-    // Populate route dropdown dynamically
-    const routeLabels = { 'route_1': 'Sucat to Baclaran' };
+    const routeLabels = {route_1:'Sucat to Baclaran',route_2:'sucat to bicutan',route_3:'sucat to kabihasnan',route_4:'baclaran to kabihasnan'};
     const sel = document.getElementById('routeSelect');
-    sel.innerHTML = routes.map(r => `<option value="${r}">${routeLabels[r] || r}</option>`).join('');
-
-    // Populate behavior dropdown dynamically
+    sel.innerHTML = routes.map(r=>`<option value="${r}">${routeLabels[r]||r}</option>`).join('');
     const bres = await fetch(`${API_BASE}/api/behaviors`);
     const behaviors = await bres.json();
     const bsel = document.getElementById('behaviorSelect');
-    bsel.innerHTML = behaviors.map(b => `<option value="${b}">${b}</option>`).join('');
-
-    setApiStatus(true, 'API connected');
-  } catch {
-    setApiStatus(false, 'API offline — start api.py');
-  }
+    bsel.innerHTML = behaviors.map(b=>`<option value="${b}">${b}</option>`).join('');
+    setApiStatus(true,'API connected');
+  } catch { setApiStatus(false,'API offline — start api.py'); }
+}
+function setApiStatus(ok,msg) {
+  document.getElementById('apiDot').className=`w-2 h-2 rounded-full inline-block ${ok?'bg-green-400':'bg-red-400'}`;
+  document.getElementById('apiMsg').textContent=msg;
 }
 
-function setApiStatus(ok, msg) {
-  document.getElementById('apiDot').className =
-    `w-2 h-2 rounded-full inline-block ${ok ? 'bg-green-400' : 'bg-red-400'}`;
-  document.getElementById('apiMsg').textContent = msg;
-}
-
-// ============================================================
+// ════════════════════════════════════════════════════════════
 // SIMULATION STATE
-// ============================================================
-let simTimer = null, simLog = [], simIdx = 0, simRunning = false;
+// ════════════════════════════════════════════════════════════
+let simTimer=null, simLog=[], simIdx=0, simRunning=false;
+
+// Physics maxima (for bar scaling, computed once per run)
+let phyMax = { ft:1, fi:1, fa:1, fr:1, fc:1, ac:1 };
 
 async function startSimulation() {
   if (simRunning) { stopSimulation(); return; }
-
   const route    = document.getElementById('routeSelect').value;
   const behavior = document.getElementById('behaviorSelect').value;
   const speedX   = parseFloat(document.getElementById('simSpeed').value);
-
-  // Show loading state
   setRunBtn(true);
-
   let data;
   try {
-    const res = await fetch(`${API_BASE}/api/simulate`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ route, behavior })
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      alert('API error: ' + (err.error || res.statusText));
-      setRunBtn(false); return;
-    }
+    const res = await fetch(`${API_BASE}/api/simulate`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({route,behavior})});
+    if(!res.ok){const err=await res.json();alert('API error: '+(err.error||res.statusText));setRunBtn(false);return;}
     data = await res.json();
-  } catch (e) {
-    alert('Could not reach API. Is api.py running?\n\n' + e.message);
-    setRunBtn(false); return;
-  }
+  } catch(e){alert('Could not reach API. Is api.py running?\n\n'+e.message);setRunBtn(false);return;}
 
   simLog     = data.log;
   simIdx     = 0;
   simRunning = true;
 
-  // Populate dashboard summary
-  document.getElementById('metDistance').textContent = data.distance_km.toFixed(2) + ' km';
-  document.getElementById('metFuel').textContent     = (data.total_fuel_L * 1000).toFixed(2) + ' mL';
-  document.getElementById('metEconomy').textContent  = data.economy_kmL.toFixed(2) + ' km/L';
+  // Compute physics maxima for bar scaling
+  phyMax.ft = Math.max(...simLog.map(r=>r.F_traction_N||0))||1;
+  phyMax.fi = Math.max(...simLog.map(r=>r.F_inertia_N||0))||1;
+  phyMax.fa = Math.max(...simLog.map(r=>r.F_aero_N||0))||1;
+  phyMax.fr = Math.max(...simLog.map(r=>r.F_rolling_N||0))||1;
+  phyMax.fc = Math.max(...simLog.map(r=>r.FC_rate_mLs||0))||1;
+  phyMax.ac = Math.max(...simLog.map(r=>Math.abs(r.accel_ms2||0)))||1;
+
+  // Load route on both maps
+  currentRouteKey = route;
+
+  if (rtMap  && rtMap.isStyleLoaded())      loadRouteOnMap('rt',   route);
+
+  // Dashboard
+  document.getElementById('metDistance').textContent = data.distance_km.toFixed(2)+' km';
+  document.getElementById('metFuel').textContent     = (data.total_fuel_L*1000).toFixed(2)+' mL';
+  document.getElementById('metEconomy').textContent  = data.economy_kmL.toFixed(2)+' km/L';
   document.getElementById('metBehavior').textContent = behavior;
-
-  const times = simLog.map(r => r.time);
-  makeDashChart('dashSpeedChart', '#8b5cf6', simLog.map(r => r.speed_kmh),    times);
-  makeDashChart('dashFuelChart',  '#3b82f6', simLog.map(r => r.total_fuel_L), times);
-  makeDashChart('dashForceChart', '#10b981', simLog.map(r => r.F_traction_N), times);
-
+  const times = simLog.map(r=>r.time);
+  makeDashChart('dashSpeedChart','#8b5cf6',simLog.map(r=>r.speed_kmh),times);
+  makeDashChart('dashFuelChart','#3b82f6',simLog.map(r=>r.total_fuel_L),times);
+  makeDashChart('dashForceChart','#10b981',simLog.map(r=>r.F_traction_N),times);
   buildRawTable(simLog);
-
-  // Reset live chart and switch tab
   initLiveChart();
   switchTab('realtime');
   document.getElementById('stopBtn').classList.remove('hidden');
   document.getElementById('liveIndicator').classList.remove('hidden');
 
   const maxFuel = data.total_fuel_L;
-  const maxDist = simLog[simLog.length - 1]?.distance_m || 1;
+  const maxDist = simLog[simLog.length-1]?.distance_m||1;
+  const PHASE_COLORS = {accelerate:'#a855f7',cruise:'#10b981',decelerate:'#f59e0b',turn:'#ec4899',idle:'#6b7280'};
+  const intervalMs = Math.max(10,50/speedX);
 
-  const intervalMs = Math.max(10, 50 / speedX);
-  const PHASE_COLORS = {
-    accelerate: '#a855f7', cruise: '#10b981',
-    decelerate: '#f59e0b', turn: '#ec4899', idle: '#6b7280'
-  };
-
-  simTimer = setInterval(() => {
-    if (simIdx >= simLog.length) { finishSimulation(); return; }
-
+  simTimer = setInterval(()=>{
+    if(simIdx>=simLog.length){finishSimulation();return;}
     const row      = simLog[simIdx];
-    const progress = row.distance_m / maxDist;
-    const pos      = Math.min(Math.floor(progress * 48), 47);
-    const road     = Array(50).fill('─');
-    road[pos] = 'J';
-
-    document.getElementById('roadTrack').textContent = road.join('');
-    document.getElementById('progressBar').style.width = (progress * 100).toFixed(1) + '%';
-
+    const progress = row.distance_m/maxDist;
+    const pos      = Math.min(Math.floor(progress*48),47);
+    document.getElementById('roadTrack').textContent = 'Simulation is Running...';
+    document.getElementById('progressBar').style.width = (progress*100).toFixed(1)+'%';
     // Speed gauge
-    document.getElementById('gaugeSpeed').innerHTML =
-      `${row.speed_kmh.toFixed(2)} <span class="text-sm font-medium">km/h</span>`;
-    document.getElementById('gaugeSpeedBar').style.width =
-      Math.min(row.speed_kmh / 80 * 100, 100).toFixed(1) + '%';
-
+    document.getElementById('gaugeSpeed').innerHTML=`${row.speed_kmh.toFixed(2)} <span class="text-sm font-medium">km/h</span>`;
+    document.getElementById('gaugeSpeedBar').style.width=Math.min(row.speed_kmh/80*100,100).toFixed(1)+'%';
     // Fuel gauge
-    document.getElementById('gaugeFuel').innerHTML =
-      `${row.total_fuel_L.toFixed(4)} <span class="text-sm font-medium">L</span>`;
-    document.getElementById('gaugeFuelBar').style.width =
-      Math.min(row.total_fuel_L / maxFuel * 100, 100).toFixed(1) + '%';
-
-    // Phase gauge
-    const phase = row.phase;
-    document.getElementById('gaugePhase').textContent = phase;
-    document.getElementById('gaugePhaseBar').style.background = PHASE_COLORS[phase] || '#6b7280';
-
-    // Segment label
-    const segEl = document.getElementById('segmentLabel');
-    segEl.textContent = '📍 ' + row.segment_label;
-    segEl.classList.remove('hidden');
-
-    // Live chart — sample every 5 rows
-    if (simIdx % 5 === 0 || simIdx === simLog.length - 1) {
+    document.getElementById('gaugeFuel').innerHTML=`${row.total_fuel_L.toFixed(4)} <span class="text-sm font-medium">L</span>`;
+    document.getElementById('gaugeFuelBar').style.width=Math.min(row.total_fuel_L/maxFuel*100,100).toFixed(1)+'%';
+    // Phase
+    const phase=row.phase;
+    document.getElementById('gaugePhase').textContent=phase;
+    document.getElementById('gaugePhaseBar').style.background=PHASE_COLORS[phase]||'#6b7280';
+    // Segment
+    const segEl=document.getElementById('segmentLabel');
+    segEl.textContent='📍 '+row.segment_label; segEl.classList.remove('hidden');
+    // Live chart
+    if(simIdx%5===0||simIdx===simLog.length-1){
       liveChart.data.labels.push(row.time);
       liveChart.data.datasets[0].data.push(row.speed_kmh);
-      if (liveChart.data.labels.length > 300) {
-        liveChart.data.labels.shift();
-        liveChart.data.datasets[0].data.shift();
-      }
+      if(liveChart.data.labels.length>300){liveChart.data.labels.shift();liveChart.data.datasets[0].data.shift();}
       liveChart.update('none');
     }
-
+    // Physics panel
+    updatePhysicsPanel(row);
+    // Both map markers
+    updateMapMarker('main', row);
+    updateMapMarker('rt',   row);
     simIdx++;
   }, intervalMs);
 }
 
 function stopSimulation() {
-  if (simTimer) { clearInterval(simTimer); simTimer = null; }
-  simRunning = false;
-  setRunBtn(false);
+  if(simTimer){clearInterval(simTimer);simTimer=null;}
+  simRunning=false; setRunBtn(false);
   document.getElementById('stopBtn').classList.add('hidden');
   document.getElementById('liveIndicator').classList.add('hidden');
 }
-
 function finishSimulation() {
   stopSimulation();
-  document.getElementById('roadTrack').textContent = 'Simulation complete!';
-  document.getElementById('progressBar').style.width = '100%';
+  document.getElementById('roadTrack').textContent='Simulation complete!';
+  document.getElementById('progressBar').style.width='100%';
   document.getElementById('dashboardReady').classList.add('hidden');
   document.getElementById('dashboardContent').classList.remove('hidden');
   document.getElementById('rawReady').classList.add('hidden');
   document.getElementById('rawContent').classList.remove('hidden');
 }
-
 function setRunBtn(loading) {
-  const btn   = document.getElementById('runBtn');
-  const label = document.getElementById('runBtnLabel');
-  label.textContent = loading ? 'Loading…' : 'Run Simulation';
-  btn.disabled = loading;
-  btn.style.opacity = loading ? '0.6' : '1';
+  const btn=document.getElementById('runBtn');
+  document.getElementById('runBtnLabel').textContent=loading?'Loading…':'Run Simulation';
+  btn.disabled=loading; btn.style.opacity=loading?'0.6':'1';
 }
 
-// ============================================================
+// Physics panel update
+function updatePhysicsPanel(row) {
+  const set = (id,val,unit,max,barId)=>{
+    document.getElementById(id).textContent = `${val.toFixed(1)} ${unit}`;
+    document.getElementById(barId).style.width = Math.min(Math.abs(val)/max*100,100).toFixed(1)+'%';
+  };
+  set('phy-ftract', row.F_traction_N||0, 'N', phyMax.ft, 'phy-ftract-bar');
+  set('phy-finert', row.F_inertia_N||0,  'N', phyMax.fi, 'phy-finert-bar');
+  set('phy-faero',  row.F_aero_N||0,     'N', phyMax.fa, 'phy-faero-bar');
+  set('phy-froll',  row.F_rolling_N||0,  'N', phyMax.fr, 'phy-froll-bar');
+  set('phy-fcrate', row.FC_rate_mLs||0, 'mL/s', phyMax.fc, 'phy-fcrate-bar');
+  set('phy-accel',  row.accel_ms2||0,   'm/s²', phyMax.ac, 'phy-accel-bar');
+  const coasting = row.is_fuel_cutoff;
+  const coastEl = document.getElementById('phy-coasting');
+  coastEl.textContent = coasting ? 'FUEL CUT-OFF ✦' : 'THROTTLE ON';
+  coastEl.style.color = coasting ? '#10b981' : '#64748b';
+  coastEl.style.borderColor = coasting ? 'rgba(16,185,129,.4)' : '';
+  document.getElementById('phy-power').textContent = `P: ${(row.P_traction_W||0).toFixed(0)} W`;
+}
+
+// ════════════════════════════════════════════════════════════
 // RAW TABLE
-// ============================================================
+// ════════════════════════════════════════════════════════════
 function buildRawTable(log) {
-  if (!log.length) return;
-  const cols = Object.keys(log[0]);
-  document.getElementById('rawHead').innerHTML =
-    cols.map(c => `<th class="px-3 py-2 text-left text-sim-text-muted font-semibold whitespace-nowrap">${c}</th>`).join('');
-  document.getElementById('rawBody').innerHTML =
-    log.slice(0, 500).map(row =>
-      `<tr class="hover:bg-sim-card/50">${
-        cols.map(c => `<td class="px-3 py-1.5 text-sim-text-muted whitespace-nowrap">${row[c]}</td>`).join('')
-      }</tr>`
-    ).join('');
+  if(!log.length)return;
+  const cols=Object.keys(log[0]);
+  document.getElementById('rawHead').innerHTML=cols.map(c=>`<th class="px-3 py-2 text-left text-sim-text-muted font-semibold whitespace-nowrap">${c}</th>`).join('');
+  document.getElementById('rawBody').innerHTML=log.slice(0,500).map(row=>`<tr class="hover:bg-sim-card/50">${cols.map(c=>`<td class="px-3 py-1.5 text-sim-text-muted whitespace-nowrap">${row[c]}</td>`).join('')}</tr>`).join('');
 }
-
 function downloadCSV() {
-  if (!simLog.length) return;
-  const cols = Object.keys(simLog[0]);
-  const csv  = [cols.join(','), ...simLog.map(r => cols.map(c => r[c]).join(','))].join('\n');
-  const a    = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([csv], { type: 'text/csv' })),
-    download: 'jeepney_simulation.csv'
-  });
+  if(!simLog.length)return;
+  const cols=Object.keys(simLog[0]);
+  const csv=[cols.join(','),...simLog.map(r=>cols.map(c=>r[c]).join(','))].join('\n');
+  const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:'jeepney_simulation.csv'});
   a.click();
 }
 
-// ============================================================
+// ════════════════════════════════════════════════════════════
 // TAB SWITCHING
-// ============================================================
+// ════════════════════════════════════════════════════════════
 function switchTab(tab) {
-  ['dashboard','realtime','rawdata'].forEach(p => {
-    document.getElementById('pane-' + p).classList.add('hidden');
-    document.getElementById('tab-'  + p).className =
-      'pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-inactive';
+  ['dashboard','realtime','rawdata'].forEach(p=>{
+    document.getElementById('pane-'+p).classList.add('hidden');
+    const t=document.getElementById('tab-'+p);
+    if(t)t.className='pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-inactive';
   });
-  document.getElementById('pane-' + tab).classList.remove('hidden');
-  document.getElementById('tab-'  + tab).className =
-    'pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-active';
+  document.getElementById('pane-'+tab).classList.remove('hidden');
+  const at=document.getElementById('tab-'+tab);
+  if(at)at.className='pb-3 text-sm font-medium flex items-center space-x-2 px-1 tab-active';
+  if(tab==='realtime'){
+    if(!rtMap) initMap('rt');
+    else setTimeout(()=>rtMap.resize(),50);
+  }
 }
 
-// ============================================================
+// ════════════════════════════════════════════════════════════
+// ROUTE DATA
+// ════════════════════════════════════════════════════════════
+const ROUTE_GEODATA = {
+  route_1: {
+    name: 'Sucat → Baclaran',
+    center: [121.0050, 14.4960],
+    zoom: 13.8,
+  
+    coords: [
+      // ── Sucat Terminal  (SLEx service road / Sucat Rd) ──────────────
+      [121.0434, 14.4542],   // 0  Sucat Terminal start
+      [121.0410, 14.4548],
+      [121.0385, 14.4557],
+      [121.0355, 14.4568],
+      [121.0320, 14.4582],
+  
+      // ── Dr. A. Santos Ave heading west ───────────────────────────────
+      [121.0285, 14.4600],
+      [121.0248, 14.4620],
+      [121.0211, 14.4642],
+      [121.0160, 14.4665],
+      [121.0110, 14.4690],
+      [121.0070, 14.4715],
+      [121.0035, 14.4735],
+  
+      // ── SM City Sucat area ───────────────────────────────────────────
+      [121.0010, 14.4755],   // 12  near SM Sucat
+      [120.9996, 14.4770],
+      [120.9985, 14.4783],
+      [120.9978, 14.4796],
+  
+      // ── Dr. A. Santos Ave continuing west ────────────────────────────
+      [120.9969, 14.4810],
+      [120.9958, 14.4825],
+      [120.9948, 14.4840],
+      [120.9940, 14.4848],
+      [120.9928, 14.4850],
+      [120.9918, 14.4855],
+      [120.9914, 14.4860],
+      [120.9913, 14.4862],
+      [120.9913, 14.4864],
+      [120.99128, 14.4868],
+      [120.9913, 14.4875],
+  
+      // ── Presidents Ave intersection  (cross-street, signal stop) ─────
+      [120.9915, 14.4885],   // 21  Presidents Ave / Dr A. Santos junction
+      [120.9918, 14.4900],
+      [120.9920, 14.4915],
+      [120.9922, 14.4930],
+  
+      // ── Re-accelerate, approach Ninoy Aquino Ave junction ────────────
+      [120.99248, 14.4948],
+      [120.9927, 14.4965],
+      [120.9926, 14.4980],
+      [120.99265, 14.4982], 
+      [120.9927, 14.4984],
+      [120.9929, 14.4986],
+      [120.9930, 14.49865],
+      [120.9935, 14.4987],
+      [120.9940, 14.4988],
+      [120.9945, 14.4989],
+      [120.9950, 14.4990],
+  
+      // ── Turn onto Ninoy Aquino Ave (northward) ───────────────────────
+      [120.99675, 14.4998],   // 28  turn point
+      [120.9975, 14.5005],
+      [120.9978, 14.5010],
+      [120.9982, 14.5015],
+      [120.9993, 14.5032],
+      [121.0005, 14.5050],
+      [121.00128, 14.5068],
+  
+      // ── Ninoy Aquino Ave  — NAIA-adjacent heavy-traffic stretch ──────
+      [121.0020, 14.5085],
+      [121.0025, 14.5102],
+      [121.0030, 14.5120],
+      [121.00375, 14.5138],
+  
+      // ── Passenger Stop 1 — Ninoy Aquino Ave ─────────────────────────
+      [121.0044, 14.51533],   // 37  Stop 1
+      [121.0034, 14.5158],
+      [121.0028, 14.5161],
+      [121.0024, 14.5163],
+      [121.0021, 14.51645],
+      [121.0020, 14.5165],
+      [121.0018, 14.5166],
+      [121.0015, 14.51675],
+      [121.0010, 14.5169],
+      [121.0005, 14.51695],
+      [121.0000, 14.51698],
+      [120.9995, 14.5170],
+      [120.9990, 14.5170],
+      [120.9985, 14.5170],
+      [120.9980, 14.51705],
+      [120.9975, 14.51705],
+      [120.9970, 14.5171],
+      [120.9965, 14.51715],
+      [120.9960, 14.51725],
+      [120.9955, 14.51735],
+      [120.9950, 14.5174],
+      [120.9945, 14.51745],
+      [120.9933, 14.5175],
+        
+      // ── Passenger Stop 2 — Ninoy Aquino Ave ─────────────────────────
+      [120.9933, 14.5177],   // 40  Stop 2
+      [120.9938, 14.5220],
+      [120.9938, 14.5236],
+      [120.9938, 14.5250],
+  
+      // ── Approach Baclaran / Roxas Blvd area ─────────────────────────
+      [120.9938, 14.5262],
+      [120.9938, 14.5272],
+      [120.9938, 14.5278],
+      [120.9938, 14.5282],
+      [120.9938, 14.5285],
+  
+      // ── Baclaran Terminal ────────────────────────────────────────────
+      [120.9924, 14.5366],   // 49  END
+    ],
+  
+    stops: [
+      {
+        label:   'START',
+        name:    'Sucat Terminal',
+        lng:     121.0434,
+        lat:     14.4542,
+        heading: 245,
+        color:   '#22c55e',
+      },
+      {
+        label:   'END',
+        name:    'Baclaran Terminal',
+        lng:     120.9924,
+        lat:     14.5366,
+        heading: 355,
+        color:   '#ef4444',
+      },
+    ],
+  },
+  
+  route_2:{
+    name:'Sucat → Bicutan', center:[121.0250,14.4930], zoom:13.5,
+    coords:[[121.0010,14.5080],[121.0080,14.5050],[121.0150,14.5010],[121.0210,14.4980],[121.0270,14.4960],[121.0340,14.4940],[121.0400,14.4920],[121.0450,14.4890],[121.0480,14.4860]],
+    stops:[
+      {label:'START',name:'Sucat Terminal',      lng:121.0010,lat:14.5080,heading:70, color:'#22c55e'},
+      {label:'Stop 1',name:'Bicutan Interchange', lng:121.0270,lat:14.4960,heading:80, color:'#8b5cf6'},
+      {label:'END',  name:'Bicutan Terminal',     lng:121.0480,lat:14.4860,heading:120,color:'#ef4444'},
+    ]
+  },
+  route_3:{
+    name:'Sucat → Kabihasnan', center:[121.0050,14.4950], zoom:13.5,
+    coords:[[121.0010,14.5080],[121.0040,14.5050],[121.0060,14.5020],[121.0070,14.4980],[121.0060,14.4940],[121.0040,14.4900],[121.0010,14.4870],[120.9980,14.4840],[120.9960,14.4810]],
+    stops:[
+      {label:'START',name:'Sucat Terminal',            lng:121.0010,lat:14.5080,heading:180,color:'#22c55e'},
+      {label:'Stop 1',name:'Ninoy Aquino Ave Junction', lng:121.0070,lat:14.4980,heading:200,color:'#8b5cf6'},
+      {label:'END',  name:'Kabihasnan Terminal',        lng:120.9960,lat:14.4810,heading:230,color:'#ef4444'},
+    ]
+  },
+  route_4:{
+    name:'Baclaran → Kabihasnan', center:[120.9980,14.4870], zoom:13.5,
+    coords:[[120.9960,14.4920],[120.9950,14.4890],[120.9950,14.4860],[120.9960,14.4830],[120.9970,14.4800],[120.9985,14.4775],[121.0000,14.4760],[121.0010,14.4780],[120.9990,14.4810]],
+    stops:[
+      {label:'START',name:'Baclaran Terminal',  lng:120.9960,lat:14.4920,heading:190,color:'#22c55e'},
+      {label:'Stop 1',name:'Tambo / La Huerta', lng:120.9960,lat:14.4830,heading:200,color:'#8b5cf6'},
+      {label:'END',  name:'Kabihasnan Terminal', lng:120.9990,lat:14.4810,heading:90, color:'#ef4444'},
+    ]
+  }
+};
+
+// ════════════════════════════════════════════════════════════
+// MAP STATE  (main = map tab, rt = realtime pane)
+// ════════════════════════════════════════════════════════════
+let jeepMap=null, rtMap=null;
+let mapIs3D=false, rtMapIs3D=false;
+let svIdxMain=0, svIdxRt=0;
+let currentRouteKey='route_1';
+let markerEl={main:null,rt:null}, jeepMarker={main:null,rt:null};
+let mapLightMode=false;
+let followJeep={main:true, rt:true};
+
+function makeJeepSVG() {
+  return `<div class="jeep3d-wrap">
+    <div class="jeep3d-ring"></div>
+    <img src="Jeepbg.png" style="width:56px;height:40px;object-fit:contain;display:block;" alt="Jeep"/>
+  </div>`;
+}
+
+function getMap(key) { return key==='main' ? jeepMap : rtMap; }
+
+function initMap(key) {
+  if(key==='main' && jeepMap) return;
+  if(key==='rt'   && rtMap)   return;
+  const containerId = key==='main' ? 'jeep-map' : 'rt-jeep-map';
+  const newMap = new maplibregl.Map({
+    container: containerId,
+    style:{
+      version:8,
+      sources:{osm:{type:'raster',tiles:['https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png','https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'],tileSize:256,maxzoom:19}},
+      layers:[{id:'osm-tiles',type:'raster',source:'osm',paint:{'raster-opacity':1}}]
+    },
+    center:[121.0010,14.4970], zoom:13.5, pitch:0, bearing:0,
+    attributionControl:false
+  });
+  if(key==='main') jeepMap=newMap; else rtMap=newMap;
+  newMap.on('load',()=>loadRouteOnMap(key, currentRouteKey));
+}
+
+function densifyCoords(pts,n){
+  const out=[];
+  for(let i=0;i<pts.length-1;i++){
+    for(let s=0;s<n;s++){
+      const t=s/n;
+      out.push([pts[i][0]+(pts[i+1][0]-pts[i][0])*t, pts[i][1]+(pts[i+1][1]-pts[i][1])*t]);
+    }
+  }
+  out.push(pts[pts.length-1]); return out;
+}
+
+function loadRouteOnMap(key, routeKey) {
+  const m = getMap(key); if(!m||!m.isStyleLoaded())return;
+  currentRouteKey = routeKey;
+  const rd = ROUTE_GEODATA[routeKey];
+  ['route-glow3','route-glow2','route-glow1','route-core','route-hi'].forEach(id=>{if(m.getLayer(id))m.removeLayer(id);});
+  if(m.getSource('route'))m.removeSource('route');
+  const dense=densifyCoords(rd.coords,8);
+  m.addSource('route',{type:'geojson',data:{type:'Feature',geometry:{type:'LineString',coordinates:dense}}});
+  m.addLayer({id:'route-glow3',type:'line',source:'route',paint:{'line-color':mapLightMode?'#6d28d9':'#7c3aed','line-width':20,'line-opacity':.09,'line-blur':8}});
+  m.addLayer({id:'route-glow2',type:'line',source:'route',paint:{'line-color':mapLightMode?'#7c3aed':'#a855f7','line-width':12,'line-opacity':.18,'line-blur':4}});
+  m.addLayer({id:'route-glow1',type:'line',source:'route',paint:{'line-color':mapLightMode?'#8b5cf6':'#c084fc','line-width':6,'line-opacity':.30,'line-blur':2}});
+  m.addLayer({id:'route-core', type:'line',source:'route',paint:{'line-color':mapLightMode?'#7c3aed':'#e879f9','line-width':3,'line-opacity':.95}});
+  m.addLayer({id:'route-hi',   type:'line',source:'route',paint:{'line-color':mapLightMode?'#a855f7':'#fae8ff','line-width':1,'line-opacity':.55}});
+  m.flyTo({center:rd.center,zoom:rd.zoom,pitch:0,bearing:0,duration:800});
+
+  // Stop markers — remove old
+  document.querySelectorAll(`.map-stop-marker-${key}`).forEach(m=>m.remove());
+  rd.stops.forEach((s,i)=>{
+    const el=document.createElement('div');
+    el.className=`map-stop-marker-${key}`;
+    const isStart=s.label==='START',isEnd=s.label==='END';
+    const dot=isStart?'#22c55e':isEnd?'#ef4444':'#8b5cf6';
+    const sz=isStart||isEnd?13:9;
+    el.style.cssText='display:flex;flex-direction:column;align-items:center;cursor:pointer;';
+    const pill=isStart||isEnd
+      ?`<div style="background:rgba(${isStart?'21,128,61':'127,29,29'},.9);border:1.5px solid ${dot};border-radius:5px;padding:2px 7px 1px;font-size:9px;font-weight:700;letter-spacing:1.3px;color:${dot};white-space:nowrap;text-transform:uppercase;margin-bottom:3px;">${s.label}</div>`
+      :`<div style="font-size:10px;font-weight:600;color:#c8d8f0;white-space:nowrap;margin-bottom:3px;text-shadow:0 1px 5px rgba(0,0,0,.9);">${s.label}</div>`;
+    el.innerHTML=`${pill}<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:rgba(10,5,30,.9);border:2.5px solid ${dot};box-shadow:0 0 8px ${dot},0 0 18px ${dot}44;"></div>`;
+    el.addEventListener('click',()=>{ if(key==='main')svIdxMain=i; else svIdxRt=i; if(key==='main')setMapView('sv'); else setRtMapView('sv'); });
+    new maplibregl.Marker({element:el,anchor:'bottom'}).setLngLat([s.lng,s.lat])
+      .setPopup(new maplibregl.Popup({closeButton:true,offset:10}).setHTML(`<b style="color:#c4b5fd">${s.label}</b><br><span style="color:#7080a0">${s.name}</span>`))
+      .addTo(m);
+  });
+
+  // Update names
+  if(key==='main') document.getElementById('mapRouteName').textContent=rd.name;
+  if(key==='rt')   document.getElementById('rt-mapRouteName').textContent=rd.name;
+
+  // Build stop list (main map only)
+  if(key==='main') buildStopList(rd);
+
+  // Jeep marker
+  const jk = key;
+  if(jeepMarker[jk]){jeepMarker[jk].remove();jeepMarker[jk]=null;}
+  markerEl[jk]=document.createElement('div');
+  markerEl[jk].innerHTML=makeJeepSVG();
+  jeepMarker[jk]=new maplibregl.Marker({element:markerEl[jk],anchor:'bottom'}).setLngLat(rd.coords[0]).addTo(m);
+}
+
+function buildStopList(rd) {
+  document.getElementById('stopList').innerHTML=rd.stops.map((s,i)=>{
+    const dot=s.label==='START'?'#22c55e':s.label==='END'?'#ef4444':'#8b5cf6';
+    return `<div onclick="svIdxMain=${i};setMapView('sv')" style="cursor:pointer"
+      class="bg-sim-bg border border-sim-border rounded-lg p-3 flex items-center gap-3 hover:border-sim-accent-purple/50 transition-colors">
+      <div style="width:10px;height:10px;border-radius:50%;background:${dot};box-shadow:0 0 6px ${dot};flex-shrink:0;"></div>
+      <div>
+        <p class="text-xs font-semibold">${s.name}</p>
+        <p class="text-[10px] text-sim-text-muted">${s.label} · ${s.lat.toFixed(4)}, ${s.lng.toFixed(4)}</p>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+let markerAnim = {main: null, rt: null};
+
+function updateMapMarker(key, row) {
+  if(!jeepMarker[key]||!getMap(key))return;
+  const rd=ROUTE_GEODATA[currentRouteKey]; if(!rd)return;
+  const coords=rd.coords;
+  const maxDist=simLog[simLog.length-1]?.distance_m||1;
+  const progress=Math.min(row.distance_m/maxDist,1);
+  const idx=Math.floor(progress*(coords.length-1));
+  const nextIdx=Math.min(idx+1,coords.length-1);
+  const frac=(progress*(coords.length-1))-idx;
+  const lng=coords[idx][0]+(coords[nextIdx][0]-coords[idx][0])*frac;
+  const lat=coords[idx][1]+(coords[nextIdx][1]-coords[idx][1])*frac;
+
+  const marker = jeepMarker[key];
+  const from = marker.getLngLat();
+  const to = {lng, lat};
+  const duration = 200; // ms, slightly less than tick interval
+  const start = performance.now();
+
+  // ── Auto-follow: re-center (and rotate in 3D) the map on the jeep ──
+  const m = getMap(key);
+  if (m && followJeep[key]) {
+    const is3D = key === 'main' ? mapIs3D : rtMapIs3D;
+    const heading = Math.atan2(
+      coords[nextIdx][0]-coords[idx][0],
+      coords[nextIdx][1]-coords[idx][1]
+    ) * 180/Math.PI;
+    m.easeTo({
+      center: [lng, lat],
+      bearing: is3D ? (heading + 360) % 360 : m.getBearing(),
+      duration: duration,
+      easing: t => t
+    });
+  }
+
+  if (markerAnim[key]) cancelAnimationFrame(markerAnim[key]);
+  function step(now) {
+    const t = Math.min((now - start) / duration, 1);
+    const curLng = from.lng + (to.lng - from.lng) * t;
+    const curLat = from.lat + (to.lat - from.lat) * t;
+    marker.setLngLat([curLng, curLat]);
+    if (t < 1) markerAnim[key] = requestAnimationFrame(step);
+  }
+  markerAnim[key] = requestAnimationFrame(step);
+}
+
+// ════════════════════════════════════════════════════════════
+// MAP VIEW TOGGLES
+// ════════════════════════════════════════════════════════════
+function setRtMapView(v) {
+  if(v==='sv'){
+    document.getElementById('rt-sv-wrap').classList.add('show');
+    renderStreetView('rt', svIdxRt); return;
+  }
+  document.getElementById('rt-sv-wrap').classList.remove('show');
+  const sw = document.getElementById('rt-view-switch');
+  if(v==='2d'){rtMapIs3D=false;rtMap&&rtMap.easeTo({pitch:0,bearing:0,duration:700});sw&&sw.classList.remove('is-3d');}
+  else if(v==='3d'){rtMapIs3D=true;rtMap&&rtMap.easeTo({pitch:57,duration:700});sw&&sw.classList.add('is-3d');}
+}
+
+function toggleRtMapView() {
+  const next = rtMapIs3D ? '2d' : '3d';
+  setRtMapView(next);
+  document.getElementById('rt-view-switch').classList.toggle('is-3d', next === '3d');
+}
+
+// ════════════════════════════════════════════════════════════
+// IMMERSIVE STREET VIEW RENDERER
+// ════════════════════════════════════════════════════════════
+function svNav(key, dir) {
+  const rd=ROUTE_GEODATA[currentRouteKey]; const n=rd.stops.length;
+  if(key==='main'){ svIdxMain=(svIdxMain+(dir==='next'?1:-1)+n)%n; renderStreetView('main',svIdxMain); }
+  else { svIdxRt=(svIdxRt+(dir==='next'?1:-1)+n)%n; renderStreetView('rt',svIdxRt); }
+}
+
+function renderStreetView(key, idx) {
+  const rd   = ROUTE_GEODATA[currentRouteKey];
+  const stops = rd.stops;
+  if(!stops||!stops[idx]) return;
+  const s = stops[idx];
+  const px = (id) => `${key==='main'?'sv':'rt-sv'}-${id}`;
+
+  // Info bar
+  document.getElementById(px('loc')).textContent    = s.name;
+  document.getElementById(px('coord')).textContent  = `${s.lat.toFixed(5)}, ${s.lng.toFixed(5)}`;
+  document.getElementById(px('stop')).textContent   = s.label;
+  document.getElementById(px('heading')).textContent= headingLabel(s.heading);
+  document.getElementById(px('streetname')).textContent = `${s.name} · ${s.label}`;
+
+  // Progress dots
+  document.getElementById(px('dots')).innerHTML = stops.map((_,i)=>
+    `<div style="width:${i===idx?8:4}px;height:${i===idx?8:4}px;border-radius:50%;background:${i===idx?stops[i].color:'rgba(255,255,255,.2)'};transition:all .25s;box-shadow:${i===idx?'0 0 6px '+stops[i].color:'none'}"></div>`
+  ).join('');
+
+  // Sky atmosphere based on heading
+  const skyGrad = headingToSkyGrad(s.heading);
+  const skyEl   = key==='main' ? document.getElementById('sv-sky') : document.querySelector('#rt-sv-wrap .sv-sky');
+  if(skyEl) skyEl.style.background = skyGrad;
+
+  // Horizon accent
+  const horizEl = document.getElementById(px('horizon'));
+  if(horizEl){
+    const [h1,h2] = headingToHorizonColors(s.heading);
+    horizEl.style.background=`linear-gradient(90deg,transparent 0%,${h1} 20%,${h2} 50%,${h1} 80%,transparent 100%)`;
+  }
+
+  // Buildings (far, mid, near layers)
+  const bSuffix = key==='main'?'sv-bldgs':'rt-bldgs';
+  buildBldgLayer(`${bSuffix}-far`,  idx*7,  0.55, 60,  95);
+  buildBldgLayer(`${bSuffix}-mid`,  idx*13, 0.75, 75,  140);
+  buildBldgLayer(`${bSuffix}-near`, idx*19, 1.0,  90,  200);
+
+  // Street lights
+  buildStreetLights(key==='main'?'sv-lights':'rt-sv-lights', idx);
+
+  // Trees
+  buildTrees(key==='main'?'sv-trees':'rt-sv-trees', idx);
+
+  // Stars
+  drawStars(key==='main'?'sv-stars':'rt-sv-stars');
+
+  // Road dashes (canvas animation)
+  animateDashes(key==='main'?'sv-dash':'rt-sv-dash');
+}
+
+function headingToSkyGrad(deg) {
+  // Night sky with subtle color tone based on direction
+  const hue = Math.floor(deg/360*60+200);
+  return `linear-gradient(180deg, #010608 0%, #020d1a 18%, #041525 40%, #0a1c35 65%, hsl(${hue},40%,10%) 100%)`;
+}
+function headingToHorizonColors(deg) {
+  const palettes=[
+    ['#7c3aed','#e879f9'],['#1e40af','#7c3aed'],['#831843','#e879f9'],
+    ['#7c3aed','#a855f7'],['#4c1d95','#7c3aed'],['#1e3a5f','#4c1d95'],
+    ['#14532d','#065f46'],['#1e40af','#4c1d95']
+  ];
+  return palettes[Math.round(deg/45)%8];
+}
+
+function buildBldgLayer(containerId, seed, opacity, minH, maxH) {
+  const c = document.getElementById(containerId); if(!c)return; c.innerHTML='';
+  const count = 20;
+  for(let i=0;i<count;i++){
+    const h  = minH + ((seed*i*37+i*19+seed) % (maxH-minH));
+    const bw = 22  + ((seed*i*13+3)          % 40);
+    const d  = document.createElement('div');
+    d.style.cssText=`flex-shrink:0;width:${bw}px;height:${h}px;position:relative;opacity:${opacity};`;
+    // Building base color
+    const lightness=5+((seed*i*7)%8);
+    d.style.background=`linear-gradient(180deg,hsl(220,20%,${lightness+3}%) 0%,hsl(220,20%,${lightness}%) 100%)`;
+    d.style.borderTop=`1px solid rgba(80,120,200,${0.05+((seed*i)%10)/100})`;
+    // Windows
+    const rows=Math.floor(h/12); const cols=Math.floor(bw/8);
+    let wins='';
+    for(let r=0;r<rows;r++) for(let cl=0;cl<cols;cl++){
+      const lit=((seed+i*3+r*7+cl*11)%10)>4;
+      const warm=((seed+r+cl)%5)===0;
+      const color=lit?(warm?'rgba(255,200,100,.55)':'rgba(140,190,255,.45)'):'rgba(20,40,70,.3)';
+      wins+=`<div style="position:absolute;width:3px;height:4px;border-radius:1px;background:${color};left:${cl*8+2}px;bottom:${r*12+4}px;"></div>`;
+    }
+    d.innerHTML=wins;
+    // Roof detail for taller buildings
+    if(h>100){
+      const antenna=`<div style="position:absolute;top:-8px;left:${bw/2-1}px;width:2px;height:8px;background:rgba(80,100,140,.6);"></div>`;
+      d.innerHTML+=antenna;
+    }
+    c.appendChild(d);
+  }
+}
+
+function buildStreetLights(containerId, seed) {
+  const c=document.getElementById(containerId); if(!c)return; c.innerHTML='';
+  const positions=[8,28,52,72]; // % from left
+  positions.forEach((pct,i)=>{
+    const side=i%2===0?'left':'right';
+    const el=document.createElement('div');
+    el.className='sv-light-pole';
+    el.style.cssText=`${side}:${pct}%;animation-duration:${4+(i*1.5)}s;animation-delay:-${i*0.7}s;`;
+    el.innerHTML=`<div class="sv-light-arm" style="transform:rotate(${side==='left'?-12:12}deg)"></div><div class="sv-light-lamp"></div><div class="sv-light-shaft"></div><div class="sv-light-stick" style="height:${80+(seed*i*3)%40}px;"></div>`;
+    c.appendChild(el);
+  });
+}
+
+function buildTrees(containerId, seed) {
+  const c=document.getElementById(containerId); if(!c)return; c.innerHTML='';
+  const treePositions=[5,20,40,60,75,90];
+  treePositions.forEach((pct,i)=>{
+    const el=document.createElement('div');
+    el.className='sv-tree';
+    const h=40+(seed*i*7+i*11)%30;
+    const w=20+(seed*i*3)%15;
+    el.style.cssText=`left:${pct}%;animation-duration:${6+i}s;animation-delay:-${i*0.9}s;`;
+    // Simple triangle tree silhouette
+    el.innerHTML=`<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;">
+      <polygon points="${w/2},0 ${w},${h*0.65} 0,${h*0.65}" fill="rgba(5,18,8,.85)"/>
+      <polygon points="${w/2},${h*0.3} ${w*0.85},${h*0.75} ${w*0.15},${h*0.75}" fill="rgba(8,24,12,.9)"/>
+      <rect x="${w/2-2}" y="${h*0.7}" width="4" height="${h*0.3}" fill="rgba(20,35,15,.8)" rx="1"/>
+    </svg>`;
+    c.appendChild(el);
+  });
+}
+
+function drawStars(canvasId) {
+  const canvas=document.getElementById(canvasId); if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  canvas.width=canvas.offsetWidth*1.5; canvas.height=canvas.offsetHeight*1.5;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // Stars
+  for(let i=0;i<200;i++){
+    const x=Math.random()*canvas.width; const y=Math.random()*canvas.height;
+    const r=Math.random()*1.4+0.2;
+    const brightness=Math.random()*0.8+0.2;
+    ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2);
+    ctx.fillStyle=`rgba(${180+Math.floor(Math.random()*75)},${200+Math.floor(Math.random()*55)},255,${brightness})`;
+    ctx.fill();
+  }
+  // Occasional bright star with glow
+  for(let i=0;i<8;i++){
+    const x=Math.random()*canvas.width; const y=Math.random()*canvas.height*0.7;
+    ctx.beginPath(); ctx.arc(x,y,2,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,.9)';
+    ctx.shadowBlur=6; ctx.shadowColor='rgba(200,220,255,.8)';
+    ctx.fill(); ctx.shadowBlur=0;
+  }
+  // Moon
+  const mx=canvas.width*0.78, my=canvas.height*0.22, mr=14;
+  const moonGrad=ctx.createRadialGradient(mx,my,0,mx,my,mr);
+  moonGrad.addColorStop(0,'rgba(230,240,255,.9)');
+  moonGrad.addColorStop(0.6,'rgba(200,220,255,.7)');
+  moonGrad.addColorStop(1,'rgba(150,180,255,0)');
+  ctx.beginPath(); ctx.arc(mx,my,mr,0,Math.PI*2);
+  ctx.fillStyle=moonGrad; ctx.fill();
+  // Moon craters (subtle)
+  ctx.fillStyle='rgba(160,190,230,.15)';
+  [[mx+4,my-3,3],[mx-3,my+4,2],[mx+1,my+6,1.5]].forEach(([cx,cy,cr])=>{
+    ctx.beginPath(); ctx.arc(cx,cy,cr,0,Math.PI*2); ctx.fill();
+  });
+}
+
+// Animated road dashes on canvas
+let dashAnimFrames={};
+function animateDashes(canvasId) {
+  if(dashAnimFrames[canvasId]) cancelAnimationFrame(dashAnimFrames[canvasId]);
+  const canvas=document.getElementById(canvasId); if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  let offset=0;
+  function frame(){
+    canvas.width=canvas.offsetWidth; canvas.height=canvas.offsetHeight;
+    if(!canvas.width||!canvas.height){dashAnimFrames[canvasId]=requestAnimationFrame(frame);return;}
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    const cx=canvas.width/2; const ch=canvas.height;
+    // Draw perspective dashes
+    for(let i=0;i<12;i++){
+      const t=((i/12)+offset/200)%1;
+      // Perspective: y grows toward bottom, x converges to vanishing point
+      const y=t*ch*0.85;
+      const halfW=4+t*80;
+      const dashH=Math.max(2,t*20);
+      const alpha=(0.1+t*0.7)*0.6;
+      ctx.fillStyle=`rgba(220,200,80,${alpha})`;
+      ctx.fillRect(cx-halfW/2, y, halfW, dashH);
+      // White center stripe
+      if(t>0.1){
+        ctx.fillStyle=`rgba(255,255,255,${alpha*0.3})`;
+        ctx.fillRect(cx-1, y, 2, dashH);
+      }
+    }
+    offset=(offset+0.8)%200;
+    dashAnimFrames[canvasId]=requestAnimationFrame(frame);
+  }
+  dashAnimFrames[canvasId]=requestAnimationFrame(frame);
+}
+
+function headingLabel(deg) {
+  const dirs=['N','NE','E','SE','S','SW','W','NW'];
+  return dirs[Math.round(deg/45)%8]+' '+String(deg).padStart(3,'0')+'°';
+}
+
+// ════════════════════════════════════════════════════════════
+// KEYBOARD NAV
+// ════════════════════════════════════════════════════════════
+document.addEventListener('keydown',e=>{
+  const mainSv=document.getElementById('sv-wrap')?.classList.contains('show');
+  const rtSv  =document.getElementById('rt-sv-wrap')?.classList.contains('show');
+  if(mainSv){
+    if(e.key==='ArrowRight'||e.key==='ArrowDown') svNav('main','next');
+    if(e.key==='ArrowLeft' ||e.key==='ArrowUp')   svNav('main','prev');
+
+  }
+  if(rtSv){
+    if(e.key==='ArrowRight'||e.key==='ArrowDown') svNav('rt','next');
+    if(e.key==='ArrowLeft' ||e.key==='ArrowUp')   svNav('rt','prev');
+    if(e.key==='Escape') setRtMapView('2d');
+  }
+});
+
+// Route selector syncs both maps
+document.getElementById('routeSelect').addEventListener('change',e=>{
+  currentRouteKey=e.target.value;
+
+  if(rtMap  &&rtMap.isStyleLoaded())   loadRouteOnMap('rt',  e.target.value);
+});
+
+// ════════════════════════════════════════════════════════════
 // INIT
-// ============================================================
+// ════════════════════════════════════════════════════════════
 initLiveChart();
 switchTab('realtime');
 checkApi();
+
+// Lazy-init: realtime tab always needs rt map
+window.addEventListener('load', ()=>{
+  // Pre-init rt map since realtime is the default tab
+  setTimeout(()=>{ if(!rtMap) initMap('rt'); }, 200);
+});
 </script>
 </body>
 </html>

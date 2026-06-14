@@ -101,8 +101,8 @@ def calculate_traction_force(v, a):
         F_rolling  : float — rolling resistance component [N]
         F_aero     : float — aerodynamic drag component [N]
     """
-    F_inertia  = JEEPNEY_PARAMS["mass_empty"] * max(a, 0.0)
-    F_rolling  = JEEPNEY_PARAMS["mass_empty"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
+    F_inertia  = JEEPNEY_PARAMS["mass_loaded"] * max(a, 0.0)
+    F_rolling  = JEEPNEY_PARAMS["mass_loaded"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
     F_aero     = (0.5 * RHO_AIR
                   * JEEPNEY_PARAMS["Cd"]
                   * JEEPNEY_PARAMS["frontal_area"]
@@ -148,12 +148,12 @@ def calculate_natural_deceleration(speed):
 
     a_natural = -(F_rolling + F_aero) / mass
     """
-    F_rolling = JEEPNEY_PARAMS["mass_empty"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
+    F_rolling = JEEPNEY_PARAMS["mass_loaded"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
     F_aero    = (0.5 * RHO_AIR
                  * JEEPNEY_PARAMS["Cd"]
                  * JEEPNEY_PARAMS["frontal_area"]
                  * speed ** 2)
-    return -(F_rolling + F_aero) / JEEPNEY_PARAMS["mass_empty"]
+    return -(F_rolling + F_aero) / JEEPNEY_PARAMS["mass_loaded"]
 
 
 # MAIN SIMULATION FUNCTION
@@ -379,7 +379,7 @@ def run_simulation(segments, behavior_name, behavior):
             if is_fuel_cutoff:
                 F_traction = 0.0
                 F_inertia  = 0.0
-                F_rolling  = JEEPNEY_PARAMS["mass_empty"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
+                F_rolling  = JEEPNEY_PARAMS["mass_loaded"] * GRAVITY * JEEPNEY_PARAMS["Crr"]
                 F_aero     = (0.5 * RHO_AIR * JEEPNEY_PARAMS["Cd"]
                               * JEEPNEY_PARAMS["frontal_area"] * (speed ** 2))
             else:

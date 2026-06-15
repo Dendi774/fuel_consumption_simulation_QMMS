@@ -12,8 +12,8 @@ ROUTES = {
             {'type': 'decelerate',  'distance': 100,   'target_speed': "corner_speed",  'label': 'decelerate to turning speed to sm sucat'},
             {'type': 'turn',  'distance': 379.88, 'label': 'turning from sm sucat to dr. a santos ave'},
             {'type': 'accelerate',  'distance': 80,   'label': 'Re-accelerate after SM Sucat stop'},
-            {'type': 'cruise',      'distance': 1110, 'label': 'Dr. A. Santos Ave - mid route with signalized intersections'},
-            {'type': 'decelerate',  'distance': 100,   'target_speed': 'corner_speed',  'label': 'Intersection stop - Presidents Ave'},
+            {'type': 'cruise',      'distance': 1110, 'label': 'Dr. A. Santos Ave - mid route'},
+            {'type': 'decelerate',  'distance': 100,   'target_speed': 'corner_speed',  'label': 'decelerate to turning speed to Ninoy Aquino Ave'},
             {"type": "turn", "distance": 91.96, "label": "turning from dr. a santos ave to Ninoy Aquino Ave"},
             {'type': 'accelerate',  'distance': 80,   'label': 'Re-accelerate after Ninoy Aquino Ave'},
             {"type": "cruise", "distance": 2170, "label": "Ninoy Aquino Ave - NAIA-adjacent heavy traffic"},
@@ -31,7 +31,7 @@ ROUTES = {
 
     "route_2": {
         "name": "sucat to kabihasnan",
-        "distance_km": 7.96,
+        "distance_km": 7.905,
 
         "segments": [
             {"type": "accelerate", "distance": 80, "label": "Baclaran Heritage Sucat Terminal departure"},
@@ -45,6 +45,33 @@ ROUTES = {
             {"type": "cruise", "distance": 283.39, "label": "Cruising at Victor Medina"},
             {"type": "decelerate", "distance": 100, "target_speed": 'corner_speed', "label": "turning to kabihasnan Road"},
             {"type": "decelerate", "distance": 60, "target_speed": 0, "label": "Stopping at kabihasnan Road"},
+        ]
+    },
+    
+    "route_3": {
+        "name": "Bicutan - Sucat Terminal to SM City Bicutan",
+        "distance_km": 3.7,
+        
+        "segments": [
+            {"type": "accelerate", "distance": 80, "label": "Bicutan - Sucat Terminal"},
+            {"type": "cruise", "distance": 3480, "label": "Cruise along W service Rd"},
+            {"type": "decelerate", "distance": 100, "target_speed": 0, "label": "decelerate to stop in SM city Bicutan"}
+        ]
+    },
+    
+    "route_4": {
+        "name": "Baclaran to Kabihasan",
+        "distance_km": 5.0,
+        
+        "segments": [
+            {"type": "accelerate", "distance": 80, "label": "departure from baclaran Terminal Mall Plaza"},
+            {"type": "cruise", "distance": 3770, "label": "Cruising along Quirino Ave"},
+            {"type": "decelerate", "distance": 100, "target_speed": "corner_speed", "label":"decelerate to turning speed"},
+            {"type": "turn", "distance": 98.12, "label": "Slight Turn along Quirino Ave"},
+            {"type": "accelerate", "distance": 80, "label": "Reaccelerate to cruising speed"},
+            {"type": "cruise", "distance": 853.95, "label": "Cruising along Quirino Ave until turn to Victor Medina"},
+            {"type": "decelerate", "distance": 100, "target_speed": "corner_speed", "label": "decelerate to turning speed"},
+            {"type": "decelerate", "distance": 31.23, "target_speed": 0, "label": "decelerate to stop at Kabihasan Jolibee"}
         ]
     }
 }

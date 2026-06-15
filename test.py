@@ -1,7 +1,7 @@
 
 
 from vehicle import JEEPNEY_PARAMS
-
+from behaviors import BEHAVIOR_PROFILES
 
 mass = JEEPNEY_PARAMS["mass_empty"]
 g = 9.81
@@ -34,7 +34,7 @@ def calculate_natural_deceleration(speed):
 
     a_natural = -(F_rolling + F_aero) / mass
     """
-    F_rolling = JEEPNEY_PARAMS["mass_empty"] * g * JEEPNEY_PARAMS["Crr"]
+    F_rolling = JEEPNEY_PARAMS["mass_loaded"] * g * JEEPNEY_PARAMS["Crr"]
     F_aero    = (0.5 * rho
                  * JEEPNEY_PARAMS["Cd"]
                  * JEEPNEY_PARAMS["frontal_area"]
@@ -44,3 +44,5 @@ def calculate_natural_deceleration(speed):
 
 
 print(calculate_natural_deceleration(v))
+print((BEHAVIOR_PROFILES["Eco"]["corner_speed"]**2 - v**2) / (2 * 100))
+print(JEEPNEY_PARAMS["mass_loaded"])

@@ -178,11 +178,10 @@ def run_simulation(segments, behavior_name, behavior):
                     Step 2: Clip to behavior limits  [behavior enters here]
                     Step 3: Update speed  v = v + a × 1s
                     Step 4: Accumulate distance (clamped to segment boundary)
-                    Step 5: Check for coasting  [behavior enters here]
-                    Step 6: Equation 1 → F_traction  [behavior enters here via a and v]
-                    Step 7: Equation 2 → FC_rate  (or 0 if coasting)
-                    Step 8: total_fuel += FC_rate × 1s
-                    Step 9: Log one row
+                    Step 5: Equation 1 → F_traction  [behavior enters here via a and v]
+                    Step 6: Equation 2 → FC_rate  (or 0 if coasting)
+                    Step 7: total_fuel += FC_rate × 1s
+                    Step 8: Log one row
 
         Fuel economy = route_distance_km / total_fuel_L
 
@@ -287,9 +286,9 @@ def run_simulation(segments, behavior_name, behavior):
             speed_error = target_v - speed
 
             if seg_type == 'decelerate':
-
-                remaining  = max(seg_dist - dist_covered, 0.1)
-                a_required = (target_v**2 - speed**2) / (2 * remaining)
+                
+                remaining  = max(seg_dist - dist_covered, 0.1) # calculates the remaining distance of the segment
+                a_required = (target_v**2 - speed**2) / (2 * remaining) # calcultaes the deceleration rate required to stop at the end of the segment
 
                 if behavior_name == 'Eco':
                     # Use the most gentle deceleration that still stops in time.
@@ -442,129 +441,3 @@ def run_simulation(segments, behavior_name, behavior):
     fuel_economy = (route_distance_km / total_fuel_L) if total_fuel_L > 1e-9 else 0.0
 
     return log, total_fuel_L, fuel_economy, route_distance_km
-
-
-
-# DISPLAY FUNCTIONS
-def print_summary(behavior_name, total_fuel_L, fuel_economy,
-                  route_distance_km, log):
-    """Prints the summary result for one behavior on one route."""
-
-    EMOJI = {'Aggressive': '🔴', 'Moderate': '🟡', 'Eco': '🟢'}
-    df    = pd.DataFrame(log)
-
-    print(f"\n{'='*65}")
-    print(f"  {EMOJI.get(behavior_name,'•')}  {behavior_name.upper()}")
-    print(f"{'='*65}")
-    print(f"  Distance        : {route_distance_km:.3f} km")
-    print(f"  Duration        : {len(log)} seconds")
-    print(f"  Total fuel      : {total_fuel_L*1000:.2f} mL  ({total_fuel_L:.5f} L)")
-    print(f"  Fuel economy    : {fuel_economy:.2f} km/L  ({100/fuel_economy:.1f} L/100km)")
-    print(f"  Average speed   : {df['speed_kmh'].mean():.1f} km/h")
-    print(f"  Max speed       : {df['speed_kmh'].max():.1f} km/h")
-    print(f"  Coasting time   : {df['coasting'].mean()*100:.1f}% of journey")
-
-    # Fuel by phase
-    print(f"\n  Fuel by driving phase:")
-    print(f"  {'Phase':>12}  {'Seconds':>8}  {'Avg mL/s':>9}  "
-          f"{'Fuel mL':>9}  {'% of total':>10}")
-    print(f"  {'─'*12}  {'─'*8}  {'─'*9}  {'─'*9}  {'─'*10}")
-
-    for phase in ['accelerate', 'cruise', 'decelerate', 'turn', 'idle']:
-        sub = df[df['phase'] == phase]
-        if sub.empty:
-            continue
-        secs      = len(sub)
-        avg_fc    = sub['FC_rate_mLs'].mean()
-        fuel_phase= sub['FC_rate_mLs'].sum() * DT
-        pct       = fuel_phase / (total_fuel_L * 1000) * 100
-
-        print(f"  {phase:>12}  {secs:>8}  {avg_fc:>9.5f}  "
-              f"{fuel_phase:>9.3f}  {pct:>9.1f}%")
-
-
-def print_comparison(route_name, results):
-    """Prints the side-by-side comparison for all behaviors on one route."""
-
-    print(f"\n\n{'#'*65}")
-    print(f"  COMPARISON — {route_name}")
-    print(f"{'#'*65}")
-    print(f"  {'':2}  {'Behavior':>12}  {'Fuel (mL)':>10}  "
-          f"{'km/L':>7}  {'L/100km':>8} ")
-    print(f"  {'─'*2}  {'─'*12}  {'─'*10}  "
-          f"{'─'*7}  {'─'*8} ")
-
-    EMOJI = {'Aggressive': '🔴', 'Moderate': '🟡', 'Eco': '🟢'}
-
-    for bname in ['Aggressive', 'Moderate', 'Eco']:
-        if bname not in results:
-            continue
-        r   = results[bname]
-        print(f"  {EMOJI[bname]}  {bname:>12}  "
-              f"{r['fuel']*1000:>10.2f}  "
-              f"{r['economy']:>7.2f}  "
-              f"{100/r['economy']:>8.2f}  ")
-
-    # Savings vs aggressive
-    if 'Aggressive' in results:
-        base = results['Aggressive']['fuel']
-        print()
-        for bname in ['Moderate', 'Eco']:
-            if bname not in results:
-                continue
-            saved    = base - results[bname]['fuel']
-            pct      = saved / base * 100
-            print(f"  {EMOJI[bname]}  {bname} saves  "
-                  f"{saved*1000:.2f} mL  ({pct:.1f}% less fuel)  |  ")
-
-
-# ENTRY POINT
-if __name__ == '__main__':
-    print('=' * 65)
-    print('  PARANAQUE JEEPNEY FUEL CONSUMPTION SIMULATION')
-    print('  Physics model : Zacharof et al. (2024)')
-    print('  Vehicle       : ' + JEEPNEY_PARAMS['name'])
-    print(f'  η (ETA)       : {ETA:.4f}  '
-          f'(eta_mt {JEEPNEY_PARAMS["eta_mt"]} × thermal 0.35)')
-    print('  Grade         : 0  (flat road — all routes)')
-    print('=' * 65)
-
-    # Run every route × every behavior
-    for route_id, route_data in ROUTES.items():
-
-        route_name = route_data['name']
-        segments   = route_data['segments']
-
-        print(f'\n\n{"#"*65}')
-        print(f'  ROUTE : {route_name}')
-        print(f'{"#"*65}')
-
-        route_results = {}
-
-        for bname, bprofile in BEHAVIOR_PROFILES.items():
-
-            log, total_fuel_L, fuel_economy, route_distance_km = run_simulation(
-                segments      = segments,
-                behavior_name = bname,
-                behavior      = bprofile,
-            )
-
-            route_results[bname] = {
-                'log':      log,
-                'fuel':     total_fuel_L,
-                'economy':  fuel_economy,
-                'distance': route_distance_km,
-            }
-
-            print_summary(bname, total_fuel_L, fuel_economy,
-                          route_distance_km, log)
-
-        print_comparison(route_name, route_results)
-
-    print(f'\n\n{"="*65}')
-    print('  SIMULATION COMPLETE')
-    print(f'  η = {ETA:.4f}  (constant across all behaviors and phases)')
-    print('  Idle fuel rate = 0.25 mL/s  (DOE/ANL measured data)')
-    print('  Coasting → FC = 0  (ECU fuel cut-off, Eco and Moderate)')
-    print('  Fuel economy uses declared route distance (consistent denominator)')
-    print(f'{"="*65}')
